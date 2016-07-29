@@ -15,6 +15,7 @@ Options:
     --aspect=<aspect>          Aspect ratio of problem [default: 4]
     --restart=<restart_file>   Restart from checkpoint
     --label=<label>            Optional additional case name label
+    --run_time_hours=<hours>   Number of hours for script to run [default: 23.5]
     
 """
 import logging
@@ -66,7 +67,8 @@ def filter_field(field,frac=0.5):
         field_filter = field_filter | (cc[i][local_slice] > frac)
     field['c'][field_filter] = 0j
 
-def Rayleigh_Benard(Rayleigh=1e6, Prandtl=1, nz=64, nx=None, aspect=4, restart=None, data_dir='./', max_writes=20):
+def Rayleigh_Benard(Rayleigh=1e6, Prandtl=1, nz=64, nx=None, aspect=4, restart=None, data_dir='./', max_writes=20,\
+                    run_time_hours=23.5):
     # input parameters
     logger.info("Ra = {}, Pr = {}".format(Rayleigh, Prandtl))
             
@@ -165,8 +167,8 @@ def Rayleigh_Benard(Rayleigh=1e6, Prandtl=1, nz=64, nx=None, aspect=4, restart=N
         checkpoint.restart(restart, solver)
         
     # Integration parameters
-    solver.stop_sim_time = 50
-    solver.stop_wall_time = 23.5*3600.
+    solver.stop_sim_time = 5000
+    solver.stop_wall_time = run_time_hours*3600.
     solver.stop_iteration = np.inf
 
     # Analysis
@@ -270,6 +272,7 @@ if __name__ == "__main__":
                     aspect=int(args['--aspect']),
                     nz=int(args['--nz']),
                     nx=nx,
-                    data_dir=data_dir)
+                    data_dir=data_dir,
+                    run_time_hours=float(args['--run_time_hours']))
     
 
