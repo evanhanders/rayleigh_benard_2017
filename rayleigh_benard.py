@@ -66,7 +66,7 @@ def filter_field(field,frac=0.5):
         field_filter = field_filter | (cc[i][local_slice] > frac)
     field['c'][field_filter] = 0j
 
-def Rayleigh_Benard(Rayleigh=1e6, Prandtl=1, nz=64, nx=None, aspect=4, restart=None, data_dir='./'):
+def Rayleigh_Benard(Rayleigh=1e6, Prandtl=1, nz=64, nx=None, aspect=4, restart=None, data_dir='./', max_writes=20):
     # input parameters
     logger.info("Ra = {}, Pr = {}".format(Rayleigh, Prandtl))
             
@@ -103,6 +103,13 @@ def Rayleigh_Benard(Rayleigh=1e6, Prandtl=1, nz=64, nx=None, aspect=4, restart=N
     
     problem.substitutions['enstrophy'] = '(dx(w) - uz)**2'
     problem.substitutions['vorticity'] = '(dx(w) - uz)' 
+
+    problem.substitutions['u_avg']      = 'plane_avg(u)'
+    problem.substitutions['u_1']        = 'u - u_avg'
+    problem.substitutions['uz_avg']     = 'plane_avg(uz)'
+    problem.substitutions['uz_1']       = 'uz - uz_avg'
+    problem.substitutions['w_avg']      = 'plane_avg(w)'
+    problem.substitutions['w_1']        = 'w - w_avg'
 
     problem.add_equation("dx(u) + wz = 0")
     problem.add_equation("dt(b) - P*(dx(dx(b)) + dz(bz))             = -(u*dx(b) + w*bz)")
@@ -164,14 +171,14 @@ def Rayleigh_Benard(Rayleigh=1e6, Prandtl=1, nz=64, nx=None, aspect=4, restart=N
 
     # Analysis
     analysis_tasks = []
-    snapshots = solver.evaluator.add_file_handler(data_dir+'slices', sim_dt=0.1, max_writes=10)
+    snapshots = solver.evaluator.add_file_handler(data_dir+'slices', sim_dt=0.1, max_writes=max_writes)
     snapshots.add_task("b")
     snapshots.add_task("b - plane_avg(b)", name="b'")
     snapshots.add_task("enstrophy")
     snapshots.add_task("vorticity")
     analysis_tasks.append(snapshots)
 
-    coeffs = solver.evaluator.add_file_handler(data_dir+'coeffs', sim_dt=0.1, max_writes=10)
+    coeffs = solver.evaluator.add_file_handler(data_dir+'coeffs', sim_dt=0.1, max_writes=max_writes)
     coeffs.add_task("b", layout='c')
     coeffs.add_task("b - plane_avg(b)", name="b'", layout='c')
     coeffs.add_task("w", layout='c')
@@ -180,13 +187,16 @@ def Rayleigh_Benard(Rayleigh=1e6, Prandtl=1, nz=64, nx=None, aspect=4, restart=N
     coeffs.add_task("vorticity", layout='c')
     analysis_tasks.append(coeffs)
 
-    profiles = solver.evaluator.add_file_handler(data_dir+'profiles', sim_dt=0.1, max_writes=10)
+    profiles = solver.evaluator.add_file_handler(data_dir+'profiles', sim_dt=0.1, max_writes=max_writes)
     profiles.add_task("plane_avg(b)", name="b")
     profiles.add_task("plane_avg(u)", name="u")
     profiles.add_task("plane_avg(enstrophy)", name="enstrophy")
+    profiles.add_task("w_avg * dz(u_avg)", name="P_ma")
+    profiles.add_task("plane_avg(u_1*dx(u_1) + w_1*dz(u_1))", name="P_fa")
+    profiles.add_task("R*dz(uz_avg)", name="P_mv")
     analysis_tasks.append(profiles)
 
-    scalar = solver.evaluator.add_file_handler(data_dir+'scalar', sim_dt=0.1, max_writes=10)
+    scalar = solver.evaluator.add_file_handler(data_dir+'scalar', sim_dt=0.1, max_writes=max_writes)
     scalar.add_task("vol_avg(b)", name="IE")
     scalar.add_task("0.5*vol_avg(u*u+w*w)", name="KE")
     scalar.add_task("0.5*vol_avg(u*u)", name="KE_x")
