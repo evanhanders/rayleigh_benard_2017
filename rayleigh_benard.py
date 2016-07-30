@@ -16,6 +16,7 @@ Options:
     --restart=<restart_file>   Restart from checkpoint
     --label=<label>            Optional additional case name label
     --run_time_hours=<hours>   Number of hours for script to run [default: 23.5]
+    --root_dir=<dir>           Root dir for RB run output [default: ./]
     
 """
 import logging
@@ -254,7 +255,8 @@ if __name__ == "__main__":
 
     import sys
     # save data in directory named after script
-    data_dir = sys.argv[0].split('.py')[0]
+    data_dir = args['--root_dir'] + '/'
+    data_dir += sys.argv[0].split('.py')[0]
     data_dir += "_Ra{}_Pr{}_a{}".format(args['--Rayleigh'], args['--Prandtl'], args['--aspect'])
     if args['--label'] is not None:
         data_dir += "_{}".format(args['--label'])
