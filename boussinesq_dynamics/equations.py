@@ -235,8 +235,16 @@ class BoussinesqEquations2D(Equations):
         self.problem.parameters['T0'] = self.T0
         self.problem.parameters['T0_z'] = self.T0_z
 
-        self.problem.parameters['P'] = (Rayleigh * Prandtl)**(-1/2)
-        self.problem.parameters['R'] = (Rayleigh / Prandtl)**(-1/2)
+        # Characteristic scales (things we've non-dimensionalized on
+        self.problem.parameters['t_buoy']   = 1.
+        self.problem.parameters['v_ff']     = 1.
+
+        self.problem.parameters['Rayleigh'] = Rayleigh
+        self.problem.parameters['Prandtl']  = Prandtl
+
+        self.problem.parameters['P'] = (Rayleigh * Prandtl)**(-1./2)
+        self.problem.parameters['R'] = (Rayleigh / Prandtl)**(-1./2)
+        self.thermal_time = (Rayleigh / Prandtl)**(1./2)
 
         self.problem.parameters['Lx'] = self.Lx
         self.problem.parameters['Lz'] = self.Lz
@@ -254,6 +262,11 @@ class BoussinesqEquations2D(Equations):
         self.problem.substitutions['Kx'] = '( -dz(Oy))'
         self.problem.substitutions['Ky'] = '(dz(Ox) - dx(Oz))'
         self.problem.substitutions['Kz'] = '(dx(Oy) )'
+
+        #Diffusivities; diffusive timescale
+        self.problem.substitutions['chi']= '(v_ff * Lz * P)'
+        self.problem.substitutions['nu'] = '(v_ff * Lz * R)'
+        self.problem.substitutions['t_therm'] = '(Lz**2/chi)'
         
         self.problem.substitutions['vel_rms']   = 'sqrt(u**2 + v**2 + w**2)'
         self.problem.substitutions['vorticity'] = 'Oy' 
@@ -263,7 +276,8 @@ class BoussinesqEquations2D(Equations):
         self.problem.substitutions['w_fluc'] = '(w - plane_avg(w))'
         self.problem.substitutions['KE'] = '(0.5*vel_rms**2)'
 
-        self.problem.substitutions['Re'] = '(vel_rms / R)'
+        self.problem.substitutions['Re'] = '(vel_rms / nu)'
+        self.problem.substitutions['Pe'] = '(vel_rms / chi)'
         
         self.problem.substitutions['sigma_xz'] = '(dx(w) + Oy + dx(w))'
         self.problem.substitutions['sigma_xx'] = '(2*dx(u))'
@@ -390,25 +404,25 @@ class BoussinesqEquations2D(Equations):
             self.problem.add_equation("wz - dz(w) = 0")
 
     def initialize_output(self, solver, data_dir, coeff_output=False,
-                          max_writes=20, max_slice_writes=20, output_dt=0.1,
+                          max_writes=20, max_slice_writes=20, output_dt=0.25,
                           mode="overwrite", **kwargs):
 
         # Analysis
         analysis_tasks = []
-        snapshots = solver.evaluator.add_file_handler(data_dir+'slices', sim_dt=output_dt, max_writes=max_slice_writes)
+        snapshots = solver.evaluator.add_file_handler(data_dir+'slices', sim_dt=output_dt, max_writes=max_slice_writes, mode=mode)
         snapshots.add_task("T1 + T0", name='T')
         snapshots.add_task("enstrophy")
         snapshots.add_task("vorticity")
         analysis_tasks.append(snapshots)
 
-        snapshots_small = solver.evaluator.add_file_handler(data_dir+'slices_small', sim_dt=output_dt, max_writes=max_slice_writes)
+        snapshots_small = solver.evaluator.add_file_handler(data_dir+'slices_small', sim_dt=output_dt, max_writes=max_slice_writes, mode=mode)
         snapshots_small.add_task("T1 + T0", name='T', scales=0.25)
         snapshots_small.add_task("enstrophy", scales=0.25)
         snapshots_small.add_task("vorticity", scales=0.25)
         analysis_tasks.append(snapshots_small)
 
         if coeff_output:
-            coeffs = solver.evaluator.add_file_handler(data_dir+'coeffs', sim_dt=output_dt, max_writes=max_slice_writes)
+            coeffs = solver.evaluator.add_file_handler(data_dir+'coeffs', sim_dt=output_dt, max_writes=max_slice_writes, mode=mode)
             coeffs.add_task("T1+T0", name="T", layout='c')
             coeffs.add_task("T1 - plane_avg(T1)", name="T'", layout='c')
             coeffs.add_task("w", layout='c')
@@ -417,7 +431,7 @@ class BoussinesqEquations2D(Equations):
             coeffs.add_task("vorticity", layout='c')
             analysis_tasks.append(coeffs)
 
-        profiles = solver.evaluator.add_file_handler(data_dir+'profiles', sim_dt=output_dt, max_writes=max_writes)
+        profiles = solver.evaluator.add_file_handler(data_dir+'profiles', sim_dt=output_dt, max_writes=max_writes, mode=mode)
         profiles.add_task("plane_avg(T1+T0)", name="T")
         profiles.add_task("plane_avg(T1)", name="T'")
         profiles.add_task("plane_avg(u)", name="u")
@@ -429,7 +443,7 @@ class BoussinesqEquations2D(Equations):
 
         analysis_tasks.append(profiles)
 
-        scalar = solver.evaluator.add_file_handler(data_dir+'scalar', sim_dt=output_dt, max_writes=max_writes)
+        scalar = solver.evaluator.add_file_handler(data_dir+'scalar', sim_dt=output_dt, max_writes=max_writes, mode=mode)
         scalar.add_task("vol_avg(T1)", name="IE")
         scalar.add_task("vol_avg(KE)", name="KE")
         scalar.add_task("vol_avg(T1) + vol_avg(KE)", name="TE")
@@ -442,5 +456,7 @@ class BoussinesqEquations2D(Equations):
         scalar.add_task("vol_avg((u - plane_avg(u))**2)", name="u1")
         scalar.add_task("vol_avg(conv_flux_z) + 1.", name="Nu")
         analysis_tasks.append(scalar)
+
+        return analysis_tasks
 
 

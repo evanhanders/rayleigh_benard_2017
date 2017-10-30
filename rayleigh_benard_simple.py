@@ -24,6 +24,7 @@ Options:
     
     --run_time=<run_time>             Run time, in hours [default: 23.5]
     --run_time_buoy=<run_time_bouy>   Run time, in buoyancy times
+    --run_time_therm=<run_time_therm> Run time, in thermal times [default: 1]
     --run_time_iter=<run_time_iter>   Run time, number of iterations; if not set, n_iter=np.inf
 
     --restart=<restart_file>   Restart from checkpoint
@@ -55,7 +56,7 @@ def Rayleigh_Benard(Rayleigh=1e6, Prandtl=1, nz=64, nx=None, aspect=4,
                     fixed_flux=False, fixed_T=True, mixed_flux_T = False,
                     stress_free=False, no_slip=True,
                     viscous_heating=False, restart=None,
-                    run_time=23.5, run_time_buoyancy=50, run_time_iter=np.inf,
+                    run_time=23.5, run_time_buoyancy=None, run_time_iter=np.inf, run_time_therm=1,
                     max_writes=20, max_slice_writes=20,
                     data_dir='./', coeff_output=True, verbose=False, no_join=False):
     import os
@@ -122,7 +123,7 @@ def Rayleigh_Benard(Rayleigh=1e6, Prandtl=1, nz=64, nx=None, aspect=4,
     logger.info('Solver built')
 
     checkpoint = Checkpoint(data_dir)
-    if restart is None:
+    if isinstance(restart, type(None)):
         equations.set_IC(solver)
         dt = None
         mode = 'overwrite'
@@ -133,16 +134,24 @@ def Rayleigh_Benard(Rayleigh=1e6, Prandtl=1, nz=64, nx=None, aspect=4,
     checkpoint.set_checkpoint(solver, wall_dt=checkpoint_min*60, mode=mode)
         
     # Integration parameters
-    solver.stop_sim_time  = run_time_buoyancy
+    if not isinstance(run_time_therm, type(None)):
+        solver.stop_sim_time = run_time_therm*equations.thermal_time
+    elif not isinstance(run_time_buoyancy, type(None)):
+        solver.stop_sim_time  = run_time_buoyancy
+    else:
+        solver.stop_sim_time  = np.inf
     solver.stop_wall_time = run_time*3600.
     solver.stop_iteration = run_time_iter
 
+    print(mode)
     # Analysis
-    equations.initialize_output(solver, data_dir, coeff_output=coeff_output)
+    output_dt = 0.25
+    max_dt    = output_dt
+    analysis_tasks = equations.initialize_output(solver, data_dir, coeff_output=coeff_output, output_dt=output_dt, mode=mode)
 
     # CFL
     CFL = flow_tools.CFL(solver, initial_dt=0.1, cadence=1, safety=cfl_safety,
-                         max_change=1.5, min_change=0.5, max_dt=0.1, threshold=0.1)
+                         max_change=1.5, min_change=0.5, max_dt=max_dt, threshold=0.1)
     CFL.add_velocities(('u', 'w'))
 
     # Flow properties
@@ -159,7 +168,7 @@ def Rayleigh_Benard(Rayleigh=1e6, Prandtl=1, nz=64, nx=None, aspect=4,
             solver.step(dt) #, trim=True)
             Re_avg = flow.grid_average('Re')
             log_string =  'Iteration: {:5d}, '.format(solver.iteration)
-            log_string += 'Time: {:8.3e}, dt: {:8.3e}, '.format(solver.sim_time, dt)
+            log_string += 'Time: {:8.3e} ({:8.3e} therm), dt: {:8.3e}, '.format(solver.sim_time, solver.sim_time/equations.thermal_time,  dt)
             log_string += 'Re: {:8.3e}/{:8.3e}'.format(Re_avg, flow.max('Re'))
             logger.info(log_string)
             
@@ -199,12 +208,13 @@ def Rayleigh_Benard(Rayleigh=1e6, Prandtl=1, nz=64, nx=None, aspect=4,
         logger.info('Run time: {:f} sec'.format(main_loop_time))
         logger.info('Run time: {:f} cpu-hr'.format(main_loop_time/60/60*equations.domain.dist.comm_cart.size))
         logger.info('iter/sec: {:f} (main loop only)'.format(n_iter_loop/main_loop_time))
-
-        final_checkpoint = solver.evaluator.add_file_handler(data_dir+'final_checkpoint', iter=1)
-        final_checkpoint.add_system(solver.state, layout='c')
-        solver.step(dt) #clean this up in the future...works for now.
-        post.merge_analysis(data_dir+'final_checkpoint')
-        
+        try:
+            final_checkpoint = Checkpoint(data_dir, checkpoint_name='final_checkpoint')
+            final_checkpoint.set_checkpoint(solver, wall_dt=1, mode="append")
+            solver.step(dt) #clean this up in the future...works for now.
+            post.merge_process_files(data_dir+'/final_checkpoint/', cleanup=False)
+        except:
+            print('cannot save final checkpoint')
         if not no_join:
             logger.info('beginning join operation')
             post.merge_analysis(data_dir+'checkpoints')
@@ -271,12 +281,13 @@ if __name__ == "__main__":
     run_time_buoy = args['--run_time_buoy']
     if not isinstance(run_time_buoy, type(None)):
         run_time_buoy = float(run_time_buoy)
-    else:
-        run_time_buoy = np.inf
+    run_time_therm = args['--run_time_therm']
+    if not isinstance(run_time_therm, type(None)):
+        run_time_therm = float(run_time_therm)
         
     Rayleigh_Benard(Rayleigh=float(args['--Rayleigh']),
                     Prandtl=float(args['--Prandtl']),
-                    restart=(args['--restart']),
+                    restart=args['--restart'],
                     aspect=int(args['--aspect']),
                     nz=int(args['--nz']),
                     nx=nx,
@@ -286,6 +297,7 @@ if __name__ == "__main__":
                     viscous_heating=args['--viscous_heating'],
                     run_time=float(args['--run_time']),
                     run_time_buoyancy=run_time_buoy,
+                    run_time_therm=run_time_therm,
                     run_time_iter=run_time_iter,
                     data_dir=data_dir,
                     max_writes=int(args['--max_writes']),
