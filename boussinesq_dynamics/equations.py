@@ -1,64 +1,67 @@
 """
-Dedalus script for 2D Rayleigh-Benard convection.
-
-This script uses a Fourier basis in the x direction with periodic boundary
-conditions.  The equations are scaled in units of the buoyancy time (Fr = 1).
-
-Usage:
-    rayleigh_benard.py [options] 
-
-Options:
-    --Rayleigh=<Rayleigh>      Rayleigh number [default: 1e6]
-    --Prandtl=<Prandtl>        Prandtl number = nu/kappa [default: 1]
-    --nz=<nz>                  Vertical resolution [default: 128]
-    --nx=<nx>                  Horizontal resolution; if not set, nx=aspect*nz_cz
-    --aspect=<aspect>          Aspect ratio of problem [default: 4]
-    --viscous_heating          Include viscous heating
-
-    --fixed_flux               Fixed flux boundary conditions top/bottom
-    --fixed_T                  Fixed temperature boundary conditions top/bottom; default if no choice is made
-    
-    --run_time=<run_time>             Run time, in hours [default: 23.5]
-    --run_time_buoy=<run_time_bouy>   Run time, in buoyancy times [default: 50]
-    --run_time_iter=<run_time_iter>   Run time, number of iterations; if not set, n_iter=np.inf
-
-    --restart=<restart_file>   Restart from checkpoint
-
-    --max_writes=<max_writes>              Writes per file for files other than slices and coeffs [default: 10]
-    --max_slice_writes=<max_slice_writes>  Writes per file for slices and coeffs [default: 10]
-    
-    --label=<label>            Optional additional case name label
-    --verbose                  Do verbose output (e.g., sparsity patterns of arrays)
-    --no_coeffs                If flagged, coeffs will not be output   
-    --no_join                  If flagged, don't join files at end of run
+    This file is a partial driving script for boussinesq dynamics.  Here,
+    formulations of the boussinesq equations are handled in a clean way using
+    classes.
 """
-import logging
-logger = logging.getLogger(__name__)
-
 import numpy as np
 from mpi4py import MPI
-import time
+import scipy.special as scp
+
+from collections import OrderedDict
+
+import logging
+logger = logging.getLogger(__name__.split('.')[-1])
 
 from dedalus import public as de
-from dedalus.extras import flow_tools
-from dedalus.tools  import post
-try:
-    from dedalus.extras.checkpointing import Checkpoint
-    checkpointing = True
-except:
-    logger.info("No checkpointing available; disabling capability")
-    checkpointing = False
 
 class Equations():
+    """
+    A general, abstract class for solving equations in dedalus.
+
+    This class can be inherited by other classes to set up specific equation sets, but
+    the base (parent) class contains much of the logic we will need regardless (setting
+    up the domain, creating a problem or a new non-constant coefficient, etc.)
+
+    Attributes:
+        compound        - If True, z-basis is a set of compound chebyshevs
+        dimensions      - The dimensionality of the problem (1D, 2D, 3D)
+        domain          - The dedalus domain on which the problem is being solved
+        mesh            - The processor mesh over which the problem is being solved
+        problem         - The Dedalus problem object that is being solved
+        problem_type    - The type of problem being solved (IVP, EVP)
+        x, y, z         - 1D NumPy arrays containing the physical coordinates of grid points in grid space
+        Lx, Ly, Lz      - Scalar containing the size of the atmosphere in x, y, z directions
+        nx, ny, nz      - Scalars containing the number of points in the x, y, z directions
+        delta_x, delta_y- Grid spacings in the x, y directions (assuming constant grid spacing)
+        z_dealias       - 1D NumPy array containing the dealiased locations of grid points in the z-direction
+    """
     def __init__(self, dimensions=2):
-        self.dimensions=dimensions
-        self.problem_type = ''
-        pass
+        """Initialize all object attributes"""
+        self.compound       = False
+        self.dimensions     = dimensions
+        self.domain         = None
+        self.mesh           = None
+        self.problem        = None
+        self.problem_type   = ''
+        self.x, self.Lx, self.nx, self.delta_x   = [None]*4
+        self.y, self.Ly, self.ny, self.delta_y   = [None]*4
+        self.z, self.z_dealias, self.Lz, self.nz = [None]*4
+        return
 
     def _set_domain(self, nx=256, Lx=4,
                           ny=256, Ly=4,
                           nz=128, Lz=1,
                           grid_dtype=np.float64, comm=MPI.COMM_WORLD, mesh=None):
+        """
+        Here the dedalus domain is created for the equation set
+
+        Inputs:
+            nx, ny, nz      - Number of grid points in the x, y, z directions
+            Lx, Ly, Lz      - Physical size of the x, y, z direction
+            grid_dtype      - Datatype to use for grid points in the problem
+            comm            - Comm group over which to solve.  Use COMM_SELF for EVP
+            mesh            - The processor mesh over which the problem is solved.
+        """
         # the naming conventions here force cartesian, generalize to spheres etc. make sense?
         self.mesh=mesh
         
@@ -80,7 +83,6 @@ class Equations():
             z_basis = de.Compound('z', tuple(z_basis_list),  dealias=3/2)
         elif len(nz)==1:
             logger.info("Setting single chebyshev basis in vertical (z) direction")
-            self.compound = False
             z_basis = de.Chebyshev('z', nz[0], interval=[0, Lz[0]], dealias=3/2)
         
         if self.dimensions > 1:
@@ -105,8 +107,7 @@ class Equations():
         self.z_dealias = self.domain.grid(axis=-1, scales=self.domain.dealias)
 
         if self.dimensions == 1:
-            self.x, self.Lx, self.nx, self.delta_x = None, 0, None, None
-            self.y, self.Ly, self.ny, self.delta_y = None, 0, None, None
+            self.Lx, self.Ly = 0, 0
         if self.dimensions > 1:
             self.x = self.domain.grid(0)
             self.Lx = self.domain.bases[0].interval[1] - self.domain.bases[0].interval[0] # global size of Lx
@@ -118,22 +119,38 @@ class Equations():
             self.ny = self.domain.bases[1].coeff_size
             self.delta_y = self.Ly/self.ny
     
-    def set_IVP_problem(self, *args, ncc_cutoff=1e-10, **kwargs):
+    def set_IVP(self, *args, ncc_cutoff=1e-10, **kwargs):
+        """
+        Constructs and initial value problem of the current object's equation set
+        """
         self.problem_type = 'IVP'
         self.problem = de.IVP(self.domain, variables=self.variables, ncc_cutoff=ncc_cutoff)
         self.set_equations(*args, **kwargs)
 
-    def set_eigenvalue_problem(self, *args, ncc_cutoff=1e-10, **kwargs):
-        # should be set EVP for consistency with set IVP.  Why do we have P_problem.  Why not IVP, EVP.
+    def set_EVP(self, *args, ncc_cutoff=1e-10, tolerance=1e-10, **kwargs):
+        """
+        Constructs an eigenvalue problem of the current objeect's equation set.
+        Note that dt(f) = omega * f, not i * omega * f, so real parts of omega
+        are growth / shrinking nodes, imaginary parts are oscillating.
+        """
+
         self.problem_type = 'EVP'
-        self.problem = de.EVP(self.domain, variables=self.variables, eigenvalue='omega', ncc_cutoff=ncc_cutoff, tolerance=1e-10)
+        self.problem = de.EVP(self.domain, variables=self.variables, eigenvalue='omega', ncc_cutoff=ncc_cutoff, tolerance=tolerance)
         self.problem.substitutions['dt(f)'] = "omega*f"
         self.set_equations(*args, **kwargs)
+
+    def set_equations(self, *args, **kwargs):
+        """ This function must be implemented in child objects of this class """
+        pass
 
     def get_problem(self):
         return self.problem
 
     def _new_ncc(self):
+        """
+        Create a new field of the atmosphere from the dedalus domain. Field's metadata is
+        set so that it is constant in the x- and y- directions (but can vary in the z).
+        """
         # is this used at all in equations.py (other than rxn), or just in atmospheres?
         # the naming conventions here force cartesian, generalize to spheres etc. make sense?
         # should "necessary quantities" logic occur here?
@@ -145,13 +162,19 @@ class Equations():
         return field
 
     def _new_field(self):
+        """Create a new field of the atmosphere that is NOT a NCC. """
         field = self.domain.new_field()
         return field
 
     def _set_subs(self):
+        """ This function must be implemented in child objects of this class """
         pass
 
-    def global_noise(self, seed=42, **kwargs):            
+    def global_noise(self, seed=42, **kwargs):
+        """
+        Create a field fielled with random noise of order 1.  Modify seed to
+        get varying noise, keep seed the same to directly compare runs.
+        """
         # Random perturbations, initialized globally for same results in parallel
         gshape = self.domain.dist.grid_layout.global_shape(scales=self.domain.dealias)
         slices = self.domain.dist.grid_layout.slices(scales=self.domain.dealias)
@@ -166,7 +189,18 @@ class Equations():
 
         return noise_field
 
-    def filter_field(self, field,frac=0.25, fancy_filter=False):
+    def filter_field(self, field, frac=0.25):
+        """
+        Filter a field in coefficient space by cutting off all coefficient above
+        a given threshold.  This is accomplished by changing the scale of a field,
+        forcing it into coefficient space at that small scale, then coming back to
+        the original scale.
+
+        Inputs:
+            field   - The dedalus field to filter
+            frac    - The fraction of coefficients to KEEP POWER IN.  If frac=0.25,
+                        The upper 75% of coefficients are set to 0.
+        """
         dom = field.domain
         logger.info("filtering field {} with frac={} using a set-scales approach".format(field.name,frac))
         orig_scale = field.meta[:]['scale']
@@ -176,38 +210,6 @@ class Equations():
         field.set_scales(orig_scale, keep_data=True)
 
     
-def global_noise(domain, seed=42, scale=None, **kwargs):            
-    # Random perturbations, initialized globally for same results in parallel
-    gshape = domain.dist.grid_layout.global_shape(scales=domain.dealias)
-    slices = domain.dist.grid_layout.slices(scales=domain.dealias)
-    rand = np.random.RandomState(seed=seed)
-    noise = rand.standard_normal(gshape)[slices]
-
-    # filter in k-space
-    noise_field = domain.new_field()
-    noise_field.set_scales(domain.dealias, keep_data=False)
-    noise_field['g'] = noise
-    filter_field(noise_field, **kwargs)
-    if scale is not None:
-        noise_field.set_scales(scale, keep_data=True)
-        
-    return noise_field['g']
-
-def filter_field(field,frac=0.5):
-    logger.info("filtering field with frac={}".format(frac))
-    dom = field.domain
-    local_slice = dom.dist.coeff_layout.slices(scales=dom.dealias)
-    coeff = []
-    for i in range(dom.dim)[::-1]:
-        coeff.append(np.linspace(0,1,dom.global_coeff_shape[i],endpoint=False))
-    cc = np.meshgrid(*coeff)
-
-    field_filter = np.zeros(dom.local_coeff_shape,dtype='bool')
-
-    for i in range(dom.dim):
-        field_filter = field_filter | (cc[i][local_slice] > frac)
-    field['c'][field_filter] = 0j
-
 def Rayleigh_Benard(Rayleigh=1e6, Prandtl=1, nz=64, nx=None, aspect=4,
                     fixed_flux=False, fixed_T=True,
                     viscous_heating=False, restart=None,
@@ -494,60 +496,4 @@ def Rayleigh_Benard(Rayleigh=1e6, Prandtl=1, nz=64, nx=None, aspect=4,
         logger.info('Run time: {:f} sec'.format(main_loop_time))
         logger.info('Run time: {:f} cpu-hr'.format(main_loop_time/60/60*domain.dist.comm_cart.size))
         logger.info('iter/sec: {:f} (main loop only)'.format(n_iter_loop/main_loop_time))
-
-if __name__ == "__main__":
-    from docopt import docopt
-    args = docopt(__doc__)
-    import logging
-    logger = logging.getLogger(__name__)
-
-    from numpy import inf as np_inf
-    
-    import sys
-
-    fixed_flux = args['--fixed_flux']
-    fixed_T = args['--fixed_T']
-    if not fixed_flux:
-        fixed_T = True
-
-    # save data in directory named after script
-    data_dir = sys.argv[0].split('.py')[0]
-    if fixed_flux:
-        data_dir += '_flux'
-    if args['--viscous_heating']:
-        data_dir += '_visc'
-    data_dir += "_Ra{}_Pr{}_a{}".format(args['--Rayleigh'], args['--Prandtl'], args['--aspect'])
-    if args['--label'] is not None:
-        data_dir += "_{}".format(args['--label'])
-    data_dir += '/'
-    logger.info("saving run in: {}".format(data_dir))
-
-    if args['--nx'] is not None:
-        nx = int(args['--nx'])
-    else:
-        nx = None
-
-    if args['--run_time_iter'] is not None:
-        run_time_iter = int(float(args['--run_time_iter']))
-    else:
-        run_time_iter = np_inf        
-        
-    Rayleigh_Benard(Rayleigh=float(args['--Rayleigh']),
-                    Prandtl=float(args['--Prandtl']),
-                    restart=(args['--restart']),
-                    aspect=int(args['--aspect']),
-                    nz=int(args['--nz']),
-                    nx=nx,
-                    fixed_flux=fixed_flux, fixed_T=fixed_T,
-                    viscous_heating=args['--viscous_heating'],
-                    run_time=float(args['--run_time']),
-                    run_time_buoyancy=float(args['--run_time_buoy']),
-                    run_time_iter=run_time_iter,
-                    data_dir=data_dir,
-                    max_writes=int(args['--max_writes']),
-                    max_slice_writes=int(args['--max_slice_writes']),
-                    coeff_output=not(args['--no_coeffs']),
-                    verbose=args['--verbose'],
-                    no_join=args['--no_join'])
-    
 
