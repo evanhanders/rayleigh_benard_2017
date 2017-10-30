@@ -238,13 +238,13 @@ def Rayleigh_Benard(Rayleigh=1e6, Prandtl=1, nz=64, nx=None, aspect=4,
     # Analysis
     analysis_tasks = []
     snapshots = solver.evaluator.add_file_handler(data_dir+'slices', sim_dt=0.1, max_writes=max_slice_writes)
-    snapshots.add_task("T", name='T')
+    snapshots.add_task("T + T0", name='T')
     snapshots.add_task("enstrophy")
     snapshots.add_task("vorticity")
     analysis_tasks.append(snapshots)
 
     snapshots_small = solver.evaluator.add_file_handler(data_dir+'slices_small', sim_dt=0.1, max_writes=max_slice_writes)
-    snapshots_small.add_task("T", name='T', scales=0.25)
+    snapshots_small.add_task("T + T0", name='T', scales=0.25)
     snapshots_small.add_task("enstrophy", scales=0.25)
     snapshots_small.add_task("vorticity", scales=0.25)
     analysis_tasks.append(snapshots_small)
