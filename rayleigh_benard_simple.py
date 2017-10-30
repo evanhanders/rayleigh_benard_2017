@@ -36,6 +36,7 @@ Options:
     --verbose                  Do verbose output (e.g., sparsity patterns of arrays)
     --no_coeffs                If flagged, coeffs will not be output   
     --no_join                  If flagged, don't join files at end of run
+    --root_dir=<dir>           Root directory for output [default: ./]
 """
 import logging
 logger = logging.getLogger(__name__)
@@ -143,7 +144,6 @@ def Rayleigh_Benard(Rayleigh=1e6, Prandtl=1, nz=64, nx=None, aspect=4,
     solver.stop_wall_time = run_time*3600.
     solver.stop_iteration = run_time_iter
 
-    print(mode)
     # Analysis
     output_dt = 0.25
     max_dt    = output_dt
@@ -253,7 +253,7 @@ if __name__ == "__main__":
         no_slip = True
 
     # save data in directory named after script
-    data_dir = sys.argv[0].split('.py')[0]
+    data_dir = args['--root_dir'] + sys.argv[0].split('.py')[0]
     if fixed_flux:
         data_dir += '_flux'
     elif mixed_flux_T:
