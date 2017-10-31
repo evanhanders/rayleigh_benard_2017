@@ -172,6 +172,8 @@ def Rayleigh_Benard(Rayleigh=1e6, Prandtl=1, nz=64, nx=None, aspect=4,
                                    flow, equations.domain.dist.comm_cart, \
                                    solver, bvp_time, \
                                    num_bvps, bvp_equil_time)
+        bc_dict.pop('stress_free')
+        bc_dict.pop('no_slip')
 
     first_step = True
     # Main loop
@@ -195,7 +197,7 @@ def Rayleigh_Benard(Rayleigh=1e6, Prandtl=1, nz=64, nx=None, aspect=4,
                                     'Lz'              : Lz
                                    }
                     diff_args = [Rayleigh, Prandtl]
-                    bvp_solver.solve_BVP(atmo_kwargs, diff_args)
+                    bvp_solver.solve_BVP(atmo_kwargs, diff_args, bc_dict)
 
 
             
@@ -270,7 +272,7 @@ if __name__ == "__main__":
     fixed_flux = args['--fixed_flux']
     fixed_T = args['--fixed_T']
     mixed_flux_T = args['--mixed_flux_T']
-    if not fixed_flux or mixed_flux_T:
+    if not (fixed_flux or mixed_flux_T):
         fixed_T = True
 
 

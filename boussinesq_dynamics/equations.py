@@ -407,9 +407,9 @@ class BoussinesqEquations2D(Equations):
             self.problem.add_equation("T1_z - dz(T1) = 0")
         else:
             self.problem.add_equation("dx(u) + wz = 0")
-            self.problem.add_equation("dt(T1) - P*(dx(dx(T1)) + dz(T1_z)) + w*T0_z       = -(u*dx(T1) + w*T1_z) - visc_heat")
-            self.problem.add_equation("dt(u)  - R*(dx(dx(u)) + dz(uz)) + dx(p)      = -(u*dx(u) + w*uz)")
-            self.problem.add_equation("dt(w)  - R*(dx(dx(w)) + dz(wz)) + dz(p) - T1 = -(u*dx(w) + w*wz)")
+            self.problem.add_equation("dt(T1) - P*Lap(T1, T1_z) + w*T0_z  = -UdotGrad(T1, T1_z) - visc_heat")
+            self.problem.add_equation("dt(u)  - R*Lap(u, uz) + dx(p)      = -UdotGrad(u, uz)")
+            self.problem.add_equation("dt(w)  - R*Lap(w, wz) + dz(p) - T1 = -UdotGrad(w, wz)")
             self.problem.add_equation("T1_z - dz(T1) = 0")
             self.problem.add_equation("uz - dz(u) = 0")
             self.problem.add_equation("wz - dz(w) = 0")
