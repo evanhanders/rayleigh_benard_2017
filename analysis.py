@@ -27,13 +27,13 @@ class DedalusData():
             self.report_contents(self.files[0])
             
     def get_keys(self, file, keys=None):
-        f = h5py.File(file, flag='r')
+        f = h5py.File(file, 'r')
         self.keys = np.copy(f['tasks'])
         f.close()
         logger.debug("tasks to study = {}".format(self.keys))
 
     def report_contents(self, file):
-        f = h5py.File(file, flag='r')
+        f = h5py.File(file, 'r')
         logger.info("Contents of {}".format(file))
         logger.info(10*'-'+' tasks '+10*'-')
         for task in f['tasks']:
@@ -56,7 +56,7 @@ class Scalar(DedalusData):
         N = 1
         for filename in self.files:
             logger.debug("opening {}".format(filename))
-            f = h5py.File(filename, flag='r')
+            f = h5py.File(filename, 'r')
             # clumsy
             for key in self.keys:
                 if N == 1:
@@ -86,7 +86,7 @@ class Profile(DedalusData):
 
         N = 1
         for filename in self.files:
-            f = h5py.File(filename, flag='r')
+            f = h5py.File(filename, 'r')
             # clumsy
             for key in self.keys:
                 if N == 1:
@@ -127,7 +127,7 @@ class Slice(DedalusData):
         N = 1
         for filename in self.files:
             logger.debug("opening {}".format(filename))
-            f = h5py.File(filename, flag='r')
+            f = h5py.File(filename, 'r')
             # clumsy
             for key in self.keys:
                 if N == 1:
@@ -165,7 +165,7 @@ class Coeff(DedalusData):
         N = 1
         for filename in self.files:
             logger.debug("opening {}".format(filename))
-            f = h5py.File(filename, flag='r')
+            f = h5py.File(filename, 'r')
             # clumsy
             for key in self.keys:
                 if N == 1:
