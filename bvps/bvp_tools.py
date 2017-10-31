@@ -240,7 +240,7 @@ class BoussinesqBVPSolver(BVPSolverBase):
         problem.add_equation(("w_IVP * T1_z - P * dz(T1_z) = -UdotGrad_T + P*Lap_T_IVP"))
         
         logger.debug('setting HS equilibrium')
-        problem.add_equation("dz(p1) - T1 = -UdotGrad_w - dz_p_IVP + R*Lap_w_IVP")
+        problem.add_equation("dz(p1) - T1 = -UdotGrad_w - dz_p_IVP + T1_IVP + R*Lap_w_IVP")
 
     def _set_BCs(self, atmosphere, bc_kwargs):
         """ Sets standard thermal BCs, and also enforces the m = 0 pressure constraint """
