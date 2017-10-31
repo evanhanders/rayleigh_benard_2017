@@ -41,7 +41,8 @@ Options:
     --do_bvp                             If flagged, do BVPs at regular intervals when Re > 1 to converge faster
     --num_bvps=<num>                     Maximum number of BVPs to do [default: 1]
     --bvp_time=<time>                    How often to do a bvp, in tbuoy [default: 20]
-    --bvp_equil_time=<time>              How long to wait after a previous BVP before starting to average for next one, in tbuoy [default: 20]
+    --bvp_equil_time=<time>              How long to wait after a previous BVP before starting to average for next one, in tbuoy [default: 10]
+    --bvp_transient_time=<time>          How long to wait at beginning of run before starting to average for next one, in tbuoy [default: 30]
     --bvp_resolution_factor=<mult>       an int, how many times larger than nz should the bvp nz be? [default: 1]
 
 """
@@ -68,7 +69,8 @@ def Rayleigh_Benard(Rayleigh=1e6, Prandtl=1, nz=64, nx=None, aspect=4,
                     run_time=23.5, run_time_buoyancy=None, run_time_iter=np.inf, run_time_therm=1,
                     max_writes=20, max_slice_writes=20,
                     data_dir='./', coeff_output=True, verbose=False, no_join=False,
-                    do_bvp=False, bvp_time=20, num_bvps=1, bvp_equil_time=20, bvp_resolution_factor=1):
+                    do_bvp=False, bvp_time=20, num_bvps=1, bvp_equil_time=10, bvp_resolution_factor=1,
+                    bvp_transient_time=30):
     import os
     from dedalus.tools.config import config
     
@@ -171,7 +173,8 @@ def Rayleigh_Benard(Rayleigh=1e6, Prandtl=1, nz=64, nx=None, aspect=4,
         bvp_solver = BoussinesqBVPSolver(BoussinesqEquations2D, nz, \
                                    flow, equations.domain.dist.comm_cart, \
                                    solver, bvp_time, \
-                                   num_bvps, bvp_equil_time)
+                                   num_bvps, bvp_equil_time,
+                                   bvp_transient_time=bvp_transient_time)
         bc_dict.pop('stress_free')
         bc_dict.pop('no_slip')
 
@@ -338,6 +341,7 @@ if __name__ == "__main__":
                      bvp_time=float(args['--bvp_time']),
                      num_bvps=int(args['--num_bvps']),
                      bvp_equil_time=float(args['--bvp_equil_time']),
+                     bvp_transient_time=float(args['--bvp_transient_time']),
                      bvp_resolution_factor=int(args['--bvp_resolution_factor']))
     
 

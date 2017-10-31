@@ -38,6 +38,7 @@ class BVPSolverBase:
         bvp_equil_time      - Amount of sim time to wait for velocities to converge before starting averages
                                 at the beginning of IVP or after a BVP is solved
         bvp_time            - Length of sim time to average over before doing bvp
+        bvp_transient_time  - Amount of time to wait at the beginning of the sim
         comm                - COMM_WORLD for IVP
         completed_bvps      - # of BVPs that have been completed during this run
         flow                - A dedalus flow_tools.GlobalFlowProperty object for the IVP solver which is tracking
@@ -58,7 +59,7 @@ class BVPSolverBase:
     FIELDS = None
     VARS   = None
 
-    def __init__(self, nz, flow, comm, solver, bvp_time, num_bvps, bvp_equil_time):
+    def __init__(self, nz, flow, comm, solver, bvp_time, num_bvps, bvp_equil_time, bvp_transient_time=0):
         """
         Initializes the object; grabs solver states and makes room for profile averages
         
@@ -83,6 +84,7 @@ class BVPSolverBase:
         self.avg_time_elapsed   = 0.
         self.avg_time_start     = 0.
         self.bvp_equil_time     = bvp_equil_time
+        self.bvp_transient_time = bvp_transient_time
         self.avg_started        = False
 
         #Get info about MPI distribution
@@ -144,8 +146,12 @@ class BVPSolverBase:
                 self.avg_started=True
                 self.avg_time_start = self.solver.sim_time
             # Don't count point if a BVP has been completed very recently
-            if (self.solver.sim_time - self.avg_time_start) < self.bvp_equil_time:
-                return
+            if self.completed_bvps == 0:
+                if (self.solver.sim_time - self.avg_time_start) < self.bvp_transient_time:
+                    return
+            else:
+                if (self.solver.sim_time - self.avg_time_start) < self.bvp_equil_time:
+                    return
 
             #Update sums for averages
             self.avg_time_elapsed += dt
