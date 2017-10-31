@@ -37,6 +37,13 @@ Options:
     --no_coeffs                If flagged, coeffs will not be output   
     --no_join                  If flagged, don't join files at end of run
     --root_dir=<dir>           Root directory for output [default: ./]
+
+    --do_bvp                             If flagged, do BVPs at regular intervals when Re > 1 to converge faster
+    --num_bvps=<num>                     Maximum number of BVPs to do [default: 1]
+    --bvp_time=<time>                    How often to do a bvp, in tbuoy [default: 20]
+    --bvp_equil_time=<time>              How long to wait after a previous BVP before starting to average for next one, in tbuoy [default: 20]
+    --bvp_resolution_factor=<mult>       an int, how many times larger than nz should the bvp nz be? [default: 1]
+
 """
 import logging
 logger = logging.getLogger(__name__)
@@ -50,6 +57,7 @@ from dedalus.extras import flow_tools
 from dedalus.tools  import post
 
 from boussinesq_dynamics.equations import BoussinesqEquations2D
+from bvps.bvp_tools import BoussinesqBVPSolver
 from tools.checkpointing import Checkpoint
 checkpoint_min = 30
     
@@ -59,7 +67,8 @@ def Rayleigh_Benard(Rayleigh=1e6, Prandtl=1, nz=64, nx=None, aspect=4,
                     viscous_heating=False, restart=None,
                     run_time=23.5, run_time_buoyancy=None, run_time_iter=np.inf, run_time_therm=1,
                     max_writes=20, max_slice_writes=20,
-                    data_dir='./', coeff_output=True, verbose=False, no_join=False):
+                    data_dir='./', coeff_output=True, verbose=False, no_join=False,
+                    do_bvp=False, bvp_time=20, num_bvps=1, bvp_equil_time=20, bvp_resolution_factor=1):
     import os
     from dedalus.tools.config import config
     
@@ -84,7 +93,6 @@ def Rayleigh_Benard(Rayleigh=1e6, Prandtl=1, nz=64, nx=None, aspect=4,
     # input parameters
     logger.info("Ra = {}, Pr = {}".format(Rayleigh, Prandtl))
 
-    equations = BoussinesqEquations2D(stream_function=stress_free)
 
     # Parameters
     Lz = 1.
@@ -93,7 +101,7 @@ def Rayleigh_Benard(Rayleigh=1e6, Prandtl=1, nz=64, nx=None, aspect=4,
         nx = int(nz*aspect)
     logger.info("resolution: [{}x{}]".format(nx, nz))
 
-    equations.set_domain(nx=nx, nz=nz, Lx=Lx, Lz=Lz)
+    equations = BoussinesqEquations2D(stream_function=stress_free, nx=nx, nz=nz, Lx=Lx, Lz=Lz)
     equations.set_IVP(Rayleigh, Prandtl)
 
     bc_dict = { 'fixed_flux'              :   None,
@@ -158,6 +166,13 @@ def Rayleigh_Benard(Rayleigh=1e6, Prandtl=1, nz=64, nx=None, aspect=4,
     flow = flow_tools.GlobalFlowProperty(solver, cadence=1)
     flow.add_property("Re", name='Re')
 
+
+    if do_bvp:
+        bvp_solver = BoussinesqBVPSolver(BoussinesqEquations2D, nz, \
+                                   flow, equations.domain.dist.comm_cart, \
+                                   solver, bvp_time, \
+                                   num_bvps, bvp_equil_time)
+
     first_step = True
     # Main loop
     try:
@@ -171,6 +186,18 @@ def Rayleigh_Benard(Rayleigh=1e6, Prandtl=1, nz=64, nx=None, aspect=4,
             log_string += 'Time: {:8.3e} ({:8.3e} therm), dt: {:8.3e}, '.format(solver.sim_time, solver.sim_time/equations.thermal_time,  dt)
             log_string += 'Re: {:8.3e}/{:8.3e}'.format(Re_avg, flow.max('Re'))
             logger.info(log_string)
+
+            if do_bvp:
+                bvp_solver.update_avgs(dt, min_Re=1e0)
+                if bvp_solver.check_if_solve():
+                    atmo_kwargs = { 'stream_function' : stress_free,
+                                    'nz'              : nz*bvp_resolution_factor,
+                                    'Lz'              : Lz
+                                   }
+                    diff_args = [Rayleigh, Prandtl]
+                    bvp_solver.solve_BVP(atmo_kwargs, diff_args)
+
+
             
             if first_step:
                 if verbose:
@@ -304,6 +331,11 @@ if __name__ == "__main__":
                     max_slice_writes=int(args['--max_slice_writes']),
                     coeff_output=not(args['--no_coeffs']),
                     verbose=args['--verbose'],
-                    no_join=args['--no_join'])
+                    no_join=args['--no_join'],
+                    do_bvp=args['--do_bvp'],
+                     bvp_time=float(args['--bvp_time']),
+                     num_bvps=int(args['--num_bvps']),
+                     bvp_equil_time=float(args['--bvp_equil_time']),
+                     bvp_resolution_factor=int(args['--bvp_resolution_factor']))
     
 

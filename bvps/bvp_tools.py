@@ -199,6 +199,9 @@ class BoussinesqBVPSolver(BVPSolverBase):
     FIELDS = OrderedDict([  
                 ('T1_IVP',              'T1'),                      
                 ('T1_z_IVP',            'T1_z'),                    
+                ('UdotGrad_T',          'UdotGrad((T0+T1), (T0_z + T1_z))'),
+                ('w_IVP',               'w'),
+                ('Lap_T_IVP',           'Lap((T0+T1), (T0_z+T1_z))'),
                         ])
     VARS   = OrderedDict([  
                 ('T1_IVP',              'T1'),
@@ -224,15 +227,15 @@ class BoussinesqBVPSolver(BVPSolverBase):
         problem.add_equation("dz(T1) - T1_z = 0")
 
         logger.debug('Setting energy equation')
-        problem.add_equation(("L_rhoT_divU + L_rho_UdotGradT + kappa_L = "
-                                         "-R_rhoT_divU - R_rho_UdotGradT - kappa_R + VH_IVP + κ*(IH)"))
+        problem.add_equation(("w_IVP * T1_z - P * dz(T1_z) = "
+                                         "-UdotGrad_T + P*Lap_T_IVP"))
     def _set_BCs(self, problem):
         # Use thermal BCs from IVP
         problem.add_bc("left(T1_z) = 0") 
         problem.add_bc("right(T1) = 0")
 
 
-    def solve_BVP(self, atmosphere_kwargs, diffusivity_kwargs, tolerance=1e-13):
+    def solve_BVP(self, atmosphere_kwargs, diffusivity_args, tolerance=1e-13):
         """
         Solves a BVP in a 2D FC_ConstHeating atmosphere under the kappa/mu formulation of the equations.
         Run parameters are specified, and should be similar to those of the bvp.
@@ -241,23 +244,21 @@ class BoussinesqBVPSolver(BVPSolverBase):
         tracked in self.solver_states.  This automatically updates the IVP's fields.
 
         """
-        super(FC_BVP_solver, self).solve_BVP()
+        super(BoussinesqBVPSolver, self).solve_BVP()
         nz = atmosphere_kwargs['nz']
 
         # No need to waste processor power on multiple bvps, only do it on one
         if self.rank == 0:
             atmosphere = self.atmosphere_class(dimensions=1, comm=MPI.COMM_SELF, **atmosphere_kwargs)
             #Variables are T, dz(T), rho, integrated mass
-            atmosphere.problem = de.NLBVP(atmosphere.domain, variables=['T1', 'T1_z', 'rho1', 'M1'],\
-                                            ncc_cutoff=tolerance)
+            atmosphere.problem = de.NLBVP(atmosphere.domain, variables=['T1', 'T1_z',], ncc_cutoff=tolerance)
 
             #Zero out old varables to make atmospheric substitutions happy.
-            old_vars = ['u', 'w', 'ln_rho1', 'v', 'u_z', 'w_z', 'v_z', 'dx(A)']
+            old_vars = ['u', 'w', 'u_z', 'w_z', 'dx(A)']
             for sub in old_vars:
                 atmosphere.problem.substitutions[sub] = '0'
 
-            atmosphere._set_diffusivities(**diffusivity_kwargs)
-            atmosphere._set_parameters()
+            atmosphere._set_parameters(*diffusivity_args)
             atmosphere._set_subs()
 
             #Add time and horizontally averaged profiles from IVP to the problem as parameters
@@ -282,7 +283,6 @@ class BoussinesqBVPSolver(BVPSolverBase):
 
             T1 = solver.state['T1']
             T1_z = solver.state['T1_z']
-            rho1 = solver.state['rho1']
 
         # Create space for the returned profiles on all processes.
         return_dict = dict()
@@ -297,12 +297,7 @@ class BoussinesqBVPSolver(BVPSolverBase):
             #Appropriately adjust T1_z in IVP
             T1_z.set_scales(self.nz/nz, keep_data=True)
             return_dict['T1_z_IVP'] = T1_z['g'] + self.profiles_dict['T1_z_IVP'] - self.profiles_dict_curr['T1_z_IVP']
-
-            #Appropriately adjust ln_rho1 in IVP
-            rho1.set_scales(self.nz/nz, keep_data=True)
-            return_dict['ln_rho1_IVP'] = np.log(1 + (rho1['g']+self.profiles_dict['rho_full_IVP']-self.profiles_dict_curr['rho_full_IVP'])/self.profiles_dict_curr['rho_full_IVP'])
-            print('returning the following avg profiles from BVP\n', return_dict)
-
+        print(return_dict)
 
         self.comm.Barrier()
         # Communicate output profiles from proc 0 to all others.

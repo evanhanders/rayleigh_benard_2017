@@ -216,13 +216,15 @@ class BoussinesqEquations2D(Equations):
     An extension of the Equations class which contains the full 2D form of the boussinesq
     equations.   
     """
-    def __init__(self, stream_function=False, **kwargs):
+    def __init__(self,*args,  stream_function=False, dimensions=2, **kwargs):
         self.stream_function = stream_function
-        super(BoussinesqEquations2D, self).__init__(**kwargs)
+        super(BoussinesqEquations2D, self).__init__(dimensions=dimensions)
         if self.stream_function:
             self.variables=['T1_z','T1','p','u','w','Oy']
         else:
             self.variables=['p','T1','u','w','T1_z','uz','wz']
+
+        self.set_domain(*args, **kwargs)
 
     def _set_parameters(self, Rayleigh, Prandtl):
         """
@@ -232,8 +234,11 @@ class BoussinesqEquations2D(Equations):
         self.T0_z['g'] = -1
         self.T0        = self._new_ncc()
         self.T0['g']   = self.Lz/2 - self.domain.grid(-1)
+        self.T0_zz = self._new_ncc()
+        self.T0_zz['g'] = 0
         self.problem.parameters['T0'] = self.T0
         self.problem.parameters['T0_z'] = self.T0_z
+        self.problem.parameters['T0_zz'] = self.T0_zz
 
         # Characteristic scales (things we've non-dimensionalized on
         self.problem.parameters['t_buoy']   = 1.
@@ -251,8 +256,14 @@ class BoussinesqEquations2D(Equations):
        
     def _set_subs(self, viscous_heating=False):
 
-        self.problem.substitutions['plane_avg(A)'] = 'integ(A, "x")/Lx'
-        self.problem.substitutions['vol_avg(A)']   = 'integ(A)/Lx/Lz'
+        if self.dimensions == 1:
+            self.problem.substitutions['plane_avg(A)'] = 'A'
+            self.problem.substitutions['vol_avg(A)']   = 'integ(A)/Lz'
+        elif self.dimensions == 2:
+            self.problem.substitutions['plane_avg(A)'] = 'integ(A, "x")/Lx'
+            self.problem.substitutions['vol_avg(A)']   = 'integ(A)/Lx/Lz'
+        self.problem.substitutions['UdotGrad(A, A_z)'] = '(u * dx(A) + w * A_z)'
+        self.problem.substitutions['Lap(A, A_z)'] = '(dx(dx(A)) + dz(A_z))'
        
         if not self.stream_function:
             self.problem.substitutions['Oy'] =  '(dz(u) - dx(w))'
