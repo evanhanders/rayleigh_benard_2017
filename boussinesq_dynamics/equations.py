@@ -375,8 +375,11 @@ class BoussinesqEquations2D(Equations):
         # vertical velocity boundary conditions
         logger.info("Vertical velocity BC: impenetrable")
         self.problem.add_bc( "left(w) = 0")
-        self.problem.add_bc("right(p) = 0", condition="(nx == 0)")
-        self.problem.add_bc("right(w) = 0", condition="(nx != 0)")
+        if self.dimensions > 1:
+            self.problem.add_bc("right(p) = 0", condition="(nx == 0)")
+            self.problem.add_bc("right(w) = 0", condition="(nx != 0)")
+        else:
+            self.problem.add_bc("right(p) = 0")
         self.dirichlet_set.append('w')
         
     def set_IC(self, solver, A0=1e-6, **kwargs):
@@ -393,10 +396,16 @@ class BoussinesqEquations2D(Equations):
         logger.info("Starting with T1 perturbations of amplitude A0 = {:g}".format(A0))
 
 
-    def set_equations(self, Rayleigh, Prandtl, viscous_heating = False):
+    def set_equations(self, Rayleigh, Prandtl, kx = 0, viscous_heating = False):
         # 2D Boussinesq hydrodynamics
+        if self.dimensions == 1:
+            self.problem.parameters['j'] = 1j
+            self.problem.substitutions['dx(f)'] = "j*kx*(f)"
+            self.problem.parameters['kx'] = kx
+ 
         self._set_parameters(Rayleigh, Prandtl)
         self._set_subs(viscous_heating=viscous_heating)
+
 
         if self.stream_function:
             self.problem.add_equation("dt(T1) - P*(dx(dx(T1)) + dz(T1_z)) + w*T0_z    = -(u*dx(T1) + w*T1_z)  - visc_heat")
