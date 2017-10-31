@@ -169,6 +169,11 @@ class BVPSolverBase:
             return
         # Reset profile arrays for getting the next bvp average
         for fd in self.FIELDS.keys():
+            if self.completed_bvps == 0:
+                self.profiles_dict_last[fd] = self.profiles_dict_curr[fd]
+            else:
+                self.profiles_dict_last[fd] += self.profiles_dict_curr[fd]
+                self.profiles_dict_last[fd] /= 2.
             self.profiles_dict[fd] = np.zeros(self.nz)
 
     def _set_subs(self, problem):
@@ -187,7 +192,10 @@ class BVPSolverBase:
         for k in self.FIELDS.keys():
             if self.rank == 0:
                 self.profiles_dict[k] /= self.avg_time_elapsed
-                self.profiles_dict_curr[k] = 1*self.profiles_dict[k]
+                if self.completed_bvps > 0:
+                    self.profiles_dict_curr[k] = 1*self.profiles_dict[k]
+                    self.profiles_dict[k] += self.profiles_dict_last[k]
+                    self.profiles_dict[k] /= 2.
 
         # Restart counters for next BVP
         self.avg_time_elapsed   = 0.
@@ -259,6 +267,7 @@ class BoussinesqBVPSolver(BVPSolverBase):
         if self.rank == 0:
             atmosphere = self.atmosphere_class(dimensions=1, comm=MPI.COMM_SELF, **atmosphere_kwargs)
             #Variables are T, dz(T), rho, integrated mass
+#            atmosphere.problem = de.NLBVP(atmosphere.domain, variables=['T1', 'T1_z'], ncc_cutoff=tolerance)
             atmosphere.problem = de.NLBVP(atmosphere.domain, variables=['T1', 'T1_z','p1'], ncc_cutoff=tolerance)
 
             #Zero out old varables to make atmospheric substitutions happy.
