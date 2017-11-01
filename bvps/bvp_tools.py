@@ -144,14 +144,14 @@ class BVPSolverBase:
                 mask = w[:,i] > 0
                 filling = mask.sum(axis=0)
                 local[self.n_per_proc*self.rank + i] = \
-                        np.sum(self.flow.properties['{}'.format(prof_name)]['g'][:,i][mask])/filling
+                        np.sum(self.flow.properties['{}'.format(prof_name)]['g'][:,i][mask])/self.nx
         elif avg_type == 2:
             w = self.flow.properties['w']['g']
             for i in range(w.shape[-1]):
                 mask = w[:,i] < 0
                 filling = mask.sum(axis=0)
                 local[self.n_per_proc*self.rank + i] = \
-                        np.sum(self.flow.properties['{}'.format(prof_name)]['g'][:,i][mask])/filling
+                        np.sum(self.flow.properties['{}'.format(prof_name)]['g'][:,i][mask])/self.nx
         self.comm.Allreduce(local, glob, op=MPI.SUM)
         return glob
 
@@ -271,25 +271,12 @@ class BoussinesqBVPSolver(BVPSolverBase):
     FIELDS = OrderedDict([  
                 ('T1_IVP',              ('T1', 0)),                      
                 ('T1_z_IVP',            ('T1_z', 0)),                    
-                ('T1_zz_IVP',           ('dz(T1_z)', 0)),                    
                 ('p_IVP',               ('p', 0)), 
-                ('uTx_IVP',             ('u*dx(T1)', 0)), 
-                ('w_up_IVP',            ('w', 1)),
-                ('w_down_IVP',          ('w', 2)),
-                ('wTz_up_IVP',          ('w*(T0_z+T1_z)', 1)),
-                ('wTz_down_IVP',        ('w*(T0_z+T1_z)', 2)),
-                ('Lap_T_IVP',           ('Lap((T0+T1), (T0_z+T1_z))', 0)),
-                ('UdotGrad_T',          ('UdotGrad((T0+T1), (T0_z + T1_z))',0)),
                 ('energy_forcing',      ('((1/P)*(u*dx(T1) + w*(T0_z + T1_z)) - Lap(T1, T1_z))', 0)),
-                ('energy_forcing_2',    ('((1/P)*(dz(w*(T0+T1))) - Lap(T1, T1_z))', 0)),
                 ('T_forcing',           ('(P*Lap(T1, T1_z) - UdotGrad((T0+T1), (T0_z+T1_z)))', 0)),
-                ('T_zz_forcing',           ('dz(dz((P*Lap(T1, T1_z) - UdotGrad((T0+T1), (T0_z+T1_z)))))', 0)),
+                ('T_z_forcing',         ('dz(P*Lap(T1, T1_z) - UdotGrad((T0+T1), (T0_z+T1_z)))', 0)),
+                ('T_zz_forcing',        ('dz(dz((P*Lap(T1, T1_z) - UdotGrad((T0+T1), (T0_z+T1_z)))))', 0)),
                         ])
-#                ('dz_p_IVP',            'dz(p)'),
-#                ('UdotGrad_w',          'UdotGrad(w, wz)'),
-#                ('Lap_w_IVP',           'Lap((w), (wz))'),
-#                ('vorticity_sq',        '(vorticity**2)'),
-#                ('wT1_IVP',             '(w*T1)')
     VARS   = OrderedDict([  
                 ('T1_IVP',              'T1'),
                 ('T1_z_IVP',            'T1_z'), 
@@ -306,18 +293,12 @@ class BoussinesqBVPSolver(BVPSolverBase):
         problem.add_equation("dz(T1) - T1_z = 0")
 
         logger.debug('Setting energy equation')
-#        problem.add_equation(("- P * dz(T1_z) = -UdotGrad_T + P*Lap_T_IVP"))
-        problem.add_equation(("dz(T1_z) = energy_forcing_2"))
+        problem.add_equation(("dz(T1_z) = energy_forcing"))
         
-        logger.debug('setting HS equilibrium')
-#        problem.add_equation("dz(p1) - T1 = -UdotGrad_w - dz_p_IVP + T1_IVP")
-
     def _set_BCs(self, atmosphere, bc_kwargs):
         """ Sets standard thermal BCs, and also enforces the m = 0 pressure constraint """
         atmosphere.dirichlet_set = []
         atmosphere.set_thermal_BC(**bc_kwargs)
-#        atmosphere.problem.add_bc("right(p1) = 0")
-#        atmosphere.dirichlet_set.append('p1')
         for key in atmosphere.dirichlet_set:
             atmosphere.problem.meta[key]['z']['dirichlet'] = True
 
@@ -348,45 +329,29 @@ class BoussinesqBVPSolver(BVPSolverBase):
             atmosphere._set_parameters(*diffusivity_args)
             atmosphere._set_subs()
             keys = list(self.FIELDS.keys())
-            keys += ['filling_up', 'filling_down', 'rhs_energy']
-            print(self.profiles_dict['w_up_IVP'] + self.profiles_dict['w_down_IVP'])
-            rhs_energy = -self.profiles_dict['UdotGrad_T'] + atmosphere.P * self.profiles_dict['Lap_T_IVP'] #- atmosphere.R * self.profiles_dict['vorticity_sq'] - self.profiles_dict['wT1_IVP']
             for k in keys:
                 f = atmosphere._new_ncc()
                 f['g'] = atmosphere.z
                 f.set_scales(self.nz/nz, keep_data=True)
-                if k == 'rhs_energy':
-                    plt.plot(f['g'], rhs_energy)
-                else:
-                    plt.plot(f['g'], self.profiles_dict[k])
+                plt.plot(f['g'], self.profiles_dict[k])
                 plt.savefig('{}_{}.png'.format(k, self.completed_bvps))
                 plt.close()
-            keys.pop(-1)
             
             T1 = atmosphere._new_field()
             T1_z = atmosphere._new_field()
             T1_zz = atmosphere._new_field()
 
-#            T1.set_scales(self.nz/nz, keep_data=False)
-#            T1['g'] = self.profiles_dict['T_forcing']*atmosphere.thermal_time*(1 - np.exp(-0.2))
-#            T1.differentiate('z', out=T1_z)
+            delta_t = atmosphere.thermal_time*(1 - np.exp(-0.05))
+            T1.set_scales(self.nz/nz, keep_data=False)
+            T1['g'] = self.profiles_dict['T_forcing']*delta_t
+#            T1_z.set_scales(self.nz/nz, keep_data=False)
+#            T1_z['g'] = self.profiles_dict['T_z_forcing']*delta_t
+            T1.differentiate('z', out=T1_z)
 
-            T1_zz.set_scales(self.nz/nz, keep_data=False)
-            T1_zz['g'] = self.profiles_dict['T_zz_forcing']*atmosphere.thermal_time*(1 - np.exp(-0.2))
-            T1_zz.antidifferentiate('z', ('left', 0), out=T1_z)
-            T1_z.antidifferentiate('z', ('right', 0), out=T1)
-
-#            f = atmosphere._new_field()
-#            int_energy = atmosphere._new_field()
-#            f.set_scales(self.nz / nz, keep_data=False)
-#            f['g'] = np.abs(rhs_energy)
-#            f.integrate('z', out=int_energy)
-#            integral = np.mean(int_energy['g']) / atmosphere.Lz
-#            print('energy mean', integral)
-#            if integral < 1e-4:
-#                print('NO MOAR BVPS!!!')
-#                self.completed_bvps = np.inf
-#                return
+#            T1_zz.set_scales(self.nz/nz, keep_data=False)
+#            T1_zz['g'] = self.profiles_dict['T_zz_forcing']*atmosphere.thermal_time*(1 - np.exp(-0.2))
+#            T1_zz.antidifferentiate('z', ('left', 0), out=T1_z)
+#            T1_z.antidifferentiate('z', ('right', 0), out=T1)
 
             #Add time and horizontally averaged profiles from IVP to the problem as parameters
 #            for k in keys:
@@ -412,7 +377,6 @@ class BoussinesqBVPSolver(BVPSolverBase):
 #            P1 = solver.state['p1']
             P1 = atmosphere._new_field()
             P1['g'] = 0
-#            T1.antidifferentiate('z', ('right', 0), out=P1)
 
         # Create space for the returned profiles on all processes.
         return_dict = dict()
