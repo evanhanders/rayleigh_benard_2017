@@ -59,7 +59,8 @@ class BVPSolverBase:
     FIELDS = None
     VARS   = None
 
-    def __init__(self, nz, flow, comm, solver, bvp_time, num_bvps, bvp_equil_time, bvp_transient_time=0):
+    def __init__(self, nx, nz, flow, comm, solver, bvp_time, num_bvps, bvp_equil_time, bvp_transient_time=0,
+                 track_filling_factor=True):
         """
         Initializes the object; grabs solver states and makes room for profile averages
         
@@ -75,6 +76,7 @@ class BVPSolverBase:
         #Get info about IVP
         self.flow       = flow
         self.solver     = solver
+        self.nx         = nx
         self.nz         = nz
 
         #Specify how BVPs work
@@ -86,6 +88,7 @@ class BVPSolverBase:
         self.bvp_equil_time     = bvp_equil_time
         self.bvp_transient_time = bvp_transient_time
         self.avg_started        = False
+        self.track_filling_factor=track_filling_factor
 
         #Get info about MPI distribution
         self.comm           = comm
@@ -94,8 +97,16 @@ class BVPSolverBase:
         self.n_per_proc     = self.nz/self.size
 
         # Set up tracking dictionaries for flow fields
+        added_fields = []
         for fd in self.FIELDS.keys():
-            self.flow.add_property('plane_avg({})'.format(self.FIELDS[fd]), name='{}_avg'.format(fd))
+            field, avg_type = self.FIELDS[fd]
+#            self.flow.add_property('{}'.format(self.FIELDS[fd]), name='{}'.format(fd))
+            if avg_type == 0:
+                self.flow.add_property('plane_avg({})'.format(field), name='{}'.format(fd))
+            else:
+                self.flow.add_property('{}'.format(field), name='{}'.format(fd))
+            self.flow.add_property('{}'.format('w'), name='w')
+                
         if self.rank == 0:
             self.profiles_dict = dict()
             self.profiles_dict_last, self.profiles_dict_curr = dict(), dict()
@@ -103,12 +114,17 @@ class BVPSolverBase:
                 self.profiles_dict[fd]      = np.zeros(nz)
                 self.profiles_dict_last[fd] = np.zeros(nz)
                 self.profiles_dict_curr[fd] = np.zeros(nz)
+            if self.track_filling_factor:
+                self.profiles_dict['filling_up'] = np.zeros(nz)
+                self.profiles_dict['filling_down'] = np.zeros(nz)
+                self.profiles_dict_curr['filling_up'] = np.zeros(nz)
+                self.profiles_dict_curr['filling_down'] = np.zeros(nz)
 
         self.solver_states = dict()
         for st in self.VARS.keys():
             self.solver_states[st] = self.solver.state[self.VARS[st]]
 
-    def get_full_profile(self, prof_name):
+    def get_full_profile(self, prof_name, avg_type=0):
         """
         Given a profile name, which is a key to the class FIELDS dictionary, communicate the
         full vertical profile across all processes, then return the full profile as a function
@@ -119,8 +135,23 @@ class BVPSolverBase:
         """
         local = np.zeros(self.nz)
         glob  = np.zeros(self.nz)
-        local[self.n_per_proc*self.rank:self.n_per_proc*(self.rank+1)] = \
-                        self.flow.properties['{}_avg'.format(prof_name)]['g'][0,:]
+        if avg_type == 0:
+            local[self.n_per_proc*self.rank:self.n_per_proc*(self.rank+1)] = \
+                        self.flow.properties['{}'.format(prof_name)]['g'][0,:]
+        elif avg_type == 1:
+            w = self.flow.properties['w']['g']
+            for i in range(w.shape[-1]):
+                mask = w[:,i] > 0
+                filling = mask.sum(axis=0)
+                local[self.n_per_proc*self.rank + i] = \
+                        np.sum(self.flow.properties['{}'.format(prof_name)]['g'][:,i][mask])/self.nx#filling
+        elif avg_type == 2:
+            w = self.flow.properties['w']['g']
+            for i in range(w.shape[-1]):
+                mask = w[:,i] < 0
+                filling = mask.sum(axis=0)
+                local[self.n_per_proc*self.rank + i] = \
+                        np.sum(self.flow.properties['{}'.format(prof_name)]['g'][:,i][mask])/self.nx#filling
         self.comm.Allreduce(local, glob, op=MPI.SUM)
         return glob
 
@@ -156,9 +187,30 @@ class BVPSolverBase:
             #Update sums for averages
             self.avg_time_elapsed += dt
             for fd in self.FIELDS.keys():
-                curr_profile = self.get_full_profile(fd)
+                field, avg_type = self.FIELDS[fd]
+                curr_profile = self.get_full_profile(fd, avg_type=avg_type)
                 if self.rank == 0:
                     self.profiles_dict[fd] += dt*curr_profile
+            if self.track_filling_factor:
+                local = np.zeros(self.nz)
+                glob  = np.zeros(self.nz)
+                w = self.flow.properties['w']['g']
+                for i in range(w.shape[-1]):
+                    mask = w[:,i] > 0
+                    filling = np.sum(mask)
+                    local[self.n_per_proc*self.rank + i] = filling
+                self.comm.Allreduce(local, glob, op=MPI.SUM)
+                if self.rank == 0:
+                    self.profiles_dict['filling_up'] += dt*glob/self.nx
+                local[:] *= 0
+                glob[:] *= 0
+                for i in range(w.shape[-1]):
+                    mask = w[:,i] < 0
+                    filling = np.sum(mask)
+                    local[self.n_per_proc*self.rank + i] = filling
+                self.comm.Allreduce(local, glob, op=MPI.SUM)
+                if self.rank == 0:
+                    self.profiles_dict['filling_down'] += dt*glob/self.nx
 
     def check_if_solve(self):
         """ Returns a boolean.  If True, it's time to solve a BVP """
@@ -169,7 +221,7 @@ class BVPSolverBase:
             return
         # Reset profile arrays for getting the next bvp average
         for fd in self.FIELDS.keys():
-            if self.completed_bvps == 0:
+            if self.completed_bvps == 1:
                 self.profiles_dict_last[fd] = self.profiles_dict_curr[fd]
             else:
                 self.profiles_dict_last[fd] += self.profiles_dict_curr[fd]
@@ -189,13 +241,16 @@ class BVPSolverBase:
     def solve_BVP(self):
         """ Base functionality at the beginning of BVP solves, regardless of equation set"""
 
-        for k in self.FIELDS.keys():
+        keys = list(self.FIELDS.keys())
+        if self.track_filling_factor:
+            keys += ['filling_up', 'filling_down']
+        for k in keys:
             if self.rank == 0:
                 self.profiles_dict[k] /= self.avg_time_elapsed
-                if self.completed_bvps > 0:
-                    self.profiles_dict_curr[k] = 1*self.profiles_dict[k]
-                    self.profiles_dict[k] += self.profiles_dict_last[k]
-                    self.profiles_dict[k] /= 2.
+                self.profiles_dict_curr[k] = 1*self.profiles_dict[k]
+#                if self.completed_bvps > 0:
+#                    self.profiles_dict[k] += self.profiles_dict_last[k]
+#                    self.profiles_dict[k] /= 2.
 
         # Restart counters for next BVP
         self.avg_time_elapsed   = 0.
@@ -210,17 +265,26 @@ class BoussinesqBVPSolver(BVPSolverBase):
     Solves energy equation.  Makes no approximations other than time-stationary dynamics.
     """
 
+    # 0 - full avg
+    # 1 - upflow
+    # 2 - downflow
     FIELDS = OrderedDict([  
-                ('T1_IVP',              'T1'),                      
-                ('T1_z_IVP',            'T1_z'),                    
-                ('p_IVP',               'p'), 
-                ('w_IVP',               'w'),
-                ('UdotGrad_T',          'UdotGrad((T0+T1), (T0_z + T1_z))'),
-                ('Lap_T_IVP',           'Lap((T0+T1), (T0_z+T1_z))'),
-                ('Lap_w_IVP',           'Lap((w), (wz))'),
-                ('dz_p_IVP',            'dz(p)'),
-                ('UdotGrad_w',          'UdotGrad(w, wz)')
+                ('T1_IVP',              ('T1', 0)),                      
+                ('T1_z_IVP',            ('T1_z', 0)),                    
+                ('p_IVP',               ('p', 0)), 
+                ('uTx_IVP',             ('u*dx(T1)', 0)), 
+                ('w_up_IVP',            ('w', 1)),
+                ('w_down_IVP',          ('w', 2)),
+                ('wTz_up_IVP',          ('w*(T0_z+T1_z)', 1)),
+                ('wTz_down_IVP',        ('w*(T0_z+T1_z)', 2)),
+                ('Lap_T_IVP',           ('Lap((T0+T1), (T0_z+T1_z))', 0)),
                         ])
+#                ('dz_p_IVP',            'dz(p)'),
+#                ('UdotGrad_w',          'UdotGrad(w, wz)'),
+#                ('Lap_w_IVP',           'Lap((w), (wz))'),
+#                ('UdotGrad_T',          'UdotGrad((T0+T1), (T0_z + T1_z))'),
+#                ('vorticity_sq',        '(vorticity**2)'),
+#                ('wT1_IVP',             '(w*T1)')
     VARS   = OrderedDict([  
                 ('T1_IVP',              'T1'),
                 ('T1_z_IVP',            'T1_z'), 
@@ -237,21 +301,23 @@ class BoussinesqBVPSolver(BVPSolverBase):
         problem.add_equation("dz(T1) - T1_z = 0")
 
         logger.debug('Setting energy equation')
-        problem.add_equation(("w_IVP * T1_z - P * dz(T1_z) = -UdotGrad_T + P*Lap_T_IVP"))
+#        problem.add_equation(("w_IVP * T1_z - P * dz(T1_z) + w_IVP*T1 = -UdotGrad_T + P*Lap_T_IVP - wT1_IVP - R * vorticity_sq"))
+#        problem.add_equation(("w_IVP * T1_z - P * dz(T1_z) = -UdotGrad_T + P*Lap_T_IVP"))
+        problem.add_equation(("- P * dz(T1_z) + (w_up_IVP + w_down_IVP)*T1_z = -uTx_IVP - wTz_up_IVP - wTz_down_IVP + P*Lap_T_IVP"))
         
         logger.debug('setting HS equilibrium')
-        problem.add_equation("dz(p1) - T1 = -UdotGrad_w - dz_p_IVP + T1_IVP + R*Lap_w_IVP")
+#        problem.add_equation("dz(p1) - T1 = -UdotGrad_w - dz_p_IVP + T1_IVP")
 
     def _set_BCs(self, atmosphere, bc_kwargs):
         """ Sets standard thermal BCs, and also enforces the m = 0 pressure constraint """
         atmosphere.dirichlet_set = []
         atmosphere.set_thermal_BC(**bc_kwargs)
-        atmosphere.problem.add_bc("right(p1) = 0")
-        atmosphere.dirichlet_set.append('p1')
+#        atmosphere.problem.add_bc("right(p1) = 0")
+#        atmosphere.dirichlet_set.append('p1')
         for key in atmosphere.dirichlet_set:
             atmosphere.problem.meta[key]['z']['dirichlet'] = True
 
-    def solve_BVP(self, atmosphere_kwargs, diffusivity_args, bc_kwargs, tolerance=1e-13):
+    def solve_BVP(self, atmosphere_kwargs, diffusivity_args, bc_kwargs, tolerance=1e-9):
         """
         Solves a BVP in a 2D Boussinesq box.
 
@@ -267,8 +333,8 @@ class BoussinesqBVPSolver(BVPSolverBase):
         if self.rank == 0:
             atmosphere = self.atmosphere_class(dimensions=1, comm=MPI.COMM_SELF, **atmosphere_kwargs)
             #Variables are T, dz(T), rho, integrated mass
-#            atmosphere.problem = de.NLBVP(atmosphere.domain, variables=['T1', 'T1_z'], ncc_cutoff=tolerance)
-            atmosphere.problem = de.NLBVP(atmosphere.domain, variables=['T1', 'T1_z','p1'], ncc_cutoff=tolerance)
+            atmosphere.problem = de.NLBVP(atmosphere.domain, variables=['T1', 'T1_z'], ncc_cutoff=tolerance)
+#            atmosphere.problem = de.NLBVP(atmosphere.domain, variables=['T1', 'T1_z','p1'], ncc_cutoff=tolerance)
 
             #Zero out old varables to make atmospheric substitutions happy.
             old_vars = ['u', 'w', 'u_z', 'w_z', 'dx(A)']
@@ -277,9 +343,31 @@ class BoussinesqBVPSolver(BVPSolverBase):
 
             atmosphere._set_parameters(*diffusivity_args)
             atmosphere._set_subs()
+            keys = list(self.FIELDS.keys())
+            keys += ['filling_up', 'filling_down']
+            for k in keys:
+                f = atmosphere._new_ncc()
+                f['g'] = atmosphere.z
+                f.set_scales(self.nz/nz, keep_data=True)
+                plt.plot(f['g'], self.profiles_dict[k])
+                plt.savefig('{}.png'.format(k))
+                plt.close()
+
+#            rhs_energy = -self.profiles_dict['UdotGrad_T'] + atmosphere.P * self.profiles_dict['Lap_T_IVP'] #- atmosphere.R * self.profiles_dict['vorticity_sq'] - self.profiles_dict['wT1_IVP']
+#            f = atmosphere._new_field()
+#            int_energy = atmosphere._new_field()
+#            f.set_scales(self.nz / nz, keep_data=False)
+#            f['g'] = np.abs(rhs_energy)
+#            f.integrate('z', out=int_energy)
+#            integral = np.mean(int_energy['g']) / atmosphere.Lz
+#            print('energy mean', integral)
+#            if integral < 1e-4:
+#                print('NO MOAR BVPS!!!')
+#                self.completed_bvps = np.inf
+#                return
 
             #Add time and horizontally averaged profiles from IVP to the problem as parameters
-            for k in self.FIELDS.keys():
+            for k in keys:
                 f = atmosphere._new_ncc()
                 f.set_scales(self.nz / nz, keep_data=True) #If nz(bvp) =/= nz(ivp), this allows interaction between them
                 f['g'] = self.profiles_dict[k]
@@ -299,7 +387,9 @@ class BoussinesqBVPSolver(BVPSolverBase):
 
             T1 = solver.state['T1']
             T1_z = solver.state['T1_z']
-            P1 = solver.state['p1']
+#            P1 = solver.state['p1']
+            P1 = atmosphere._new_field()
+            T1.antidifferentiate('z', ('right', 0), out=P1)
 
         # Create space for the returned profiles on all processes.
         return_dict = dict()
@@ -318,7 +408,7 @@ class BoussinesqBVPSolver(BVPSolverBase):
             #Appropriately adjust p in IVP
             P1.set_scales(self.nz/nz, keep_data=True)
             return_dict['p_IVP'] = P1['g'] + self.profiles_dict['p_IVP'] - self.profiles_dict_curr['p_IVP']
-        print(return_dict)
+            print(return_dict)
 
         self.comm.Barrier()
         # Communicate output profiles from proc 0 to all others.

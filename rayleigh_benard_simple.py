@@ -104,7 +104,7 @@ def Rayleigh_Benard(Rayleigh=1e6, Prandtl=1, nz=64, nx=None, aspect=4,
     logger.info("resolution: [{}x{}]".format(nx, nz))
 
     equations = BoussinesqEquations2D(stream_function=stress_free, nx=nx, nz=nz, Lx=Lx, Lz=Lz)
-    equations.set_IVP(Rayleigh, Prandtl)
+    equations.set_IVP(Rayleigh, Prandtl, viscous_heating=viscous_heating)
 
     bc_dict = { 'fixed_flux'              :   None,
                 'fixed_temperature'       :   None,
@@ -146,9 +146,9 @@ def Rayleigh_Benard(Rayleigh=1e6, Prandtl=1, nz=64, nx=None, aspect=4,
         
     # Integration parameters
     if not isinstance(run_time_therm, type(None)):
-        solver.stop_sim_time = run_time_therm*equations.thermal_time
+        solver.stop_sim_time = run_time_therm*equations.thermal_time + solver.sim_time
     elif not isinstance(run_time_buoyancy, type(None)):
-        solver.stop_sim_time  = run_time_buoyancy
+        solver.stop_sim_time  = run_time_buoyancy + solver.sim_time
     else:
         solver.stop_sim_time  = np.inf
     solver.stop_wall_time = run_time*3600.
@@ -170,7 +170,7 @@ def Rayleigh_Benard(Rayleigh=1e6, Prandtl=1, nz=64, nx=None, aspect=4,
 
 
     if do_bvp:
-        bvp_solver = BoussinesqBVPSolver(BoussinesqEquations2D, nz, \
+        bvp_solver = BoussinesqBVPSolver(BoussinesqEquations2D, nx, nz, \
                                    flow, equations.domain.dist.comm_cart, \
                                    solver, bvp_time, \
                                    num_bvps, bvp_equil_time,
