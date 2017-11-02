@@ -60,7 +60,7 @@ class BVPSolverBase:
     VARS   = None
 
     def __init__(self, nx, nz, flow, comm, solver, bvp_time, num_bvps, bvp_equil_time, bvp_transient_time=0,
-                 track_filling_factor=True):
+                 track_filling_factor=False, bvp_pairs=True):
         """
         Initializes the object; grabs solver states and makes room for profile averages
         
@@ -89,6 +89,7 @@ class BVPSolverBase:
         self.bvp_transient_time = bvp_transient_time
         self.avg_started        = False
         self.track_filling_factor=track_filling_factor
+        self.bvp_pairs          = bvp_pairs
 
         #Get info about MPI distribution
         self.comm           = comm
@@ -221,11 +222,11 @@ class BVPSolverBase:
             return
         # Reset profile arrays for getting the next bvp average
         for fd in self.FIELDS.keys():
-            if self.completed_bvps == 1:
-                self.profiles_dict_last[fd] = self.profiles_dict_curr[fd]
-            else:
-                self.profiles_dict_last[fd] += self.profiles_dict_curr[fd]
-                self.profiles_dict_last[fd] /= 2.
+#            if self.completed_bvps == 1:
+            self.profiles_dict_last[fd] = self.profiles_dict_curr[fd]
+#            else:
+#                self.profiles_dict_last[fd] += self.profiles_dict_curr[fd]
+#                self.profiles_dict_last[fd] /= 2.
             self.profiles_dict[fd] = np.zeros(self.nz)
 
     def _set_subs(self, problem):
@@ -250,9 +251,9 @@ class BVPSolverBase:
                 self.profiles_dict[k] /= self.avg_time_elapsed
 #                print(self.profiles_dict[k], self.avg_time_elapsed)
                 self.profiles_dict_curr[k] = 1*self.profiles_dict[k]
-#                if self.completed_bvps > 0:
-#                    self.profiles_dict[k] += self.profiles_dict_last[k]
-#                    self.profiles_dict[k] /= 2.
+                if self.completed_bvps % 2 != 0 and self.bvp_pairs:
+                    self.profiles_dict[k] += self.profiles_dict_last[k]
+                    self.profiles_dict[k] /= 2.
 
         # Restart counters for next BVP
         self.avg_time_elapsed   = 0.
@@ -274,10 +275,13 @@ class BoussinesqBVPSolver(BVPSolverBase):
                 ('T1_IVP',              ('T1', 0)),                      
                 ('T1_z_IVP',            ('T1_z', 0)),                    
                 ('p_IVP',               ('p', 0)), 
-                ('T_forcing',           ('(P*Lap(T1, T1_z) - UdotGrad((T0+T1), (T0_z+T1_z)))', 0)),
+                ('T_forcing',           ('(UdotGrad((T0+T1), (T0_z+T1_z)) - dz(P * T1_z))', 0)),
+#                ('T_forcing',           ('dz(w*(T1) - P * T1_z)', 0)),
+                ('w_forcing',           ('(-UdotGrad(w, wz) - dz(p) + T1 + R*Lap(w, wz))', 0)),
                 ('T_z_forcing',         ('dz(P*Lap(T1, T1_z) - UdotGrad((T0+T1), (T0_z+T1_z)))', 0)),
                 ('T_zz_forcing',        ('dz(dz((P*Lap(T1, T1_z) - UdotGrad((T0+T1), (T0_z+T1_z)))))', 0)),
                         ])
+#                ('T_forcing',           ('(P*Lap(T1, T1_z) - UdotGrad((T0+T1), (T0_z+T1_z)))', 0)),
     VARS   = OrderedDict([  
                 ('T1_IVP',              'T1'),
                 ('T1_z_IVP',            'T1_z'), 
@@ -294,12 +298,16 @@ class BoussinesqBVPSolver(BVPSolverBase):
         problem.add_equation("dz(T1) - T1_z = 0")
 
         logger.debug('Setting energy equation')
-        problem.add_equation(("P*dz(T1_z) = -T_forcing"))
+        problem.add_equation(("P*dz(T1_z) = T_forcing"))
+        
+        logger.debug('Setting HS equation')
+        problem.add_equation(("dz(p1) - T1 =  w_forcing"))
         
     def _set_BCs(self, atmosphere, bc_kwargs):
         """ Sets standard thermal BCs, and also enforces the m = 0 pressure constraint """
         atmosphere.dirichlet_set = []
         atmosphere.set_thermal_BC(**bc_kwargs)
+        atmosphere.problem.add_bc('right(p1) = 0')
         for key in atmosphere.dirichlet_set:
             atmosphere.problem.meta[key]['z']['dirichlet'] = True
 
@@ -319,8 +327,8 @@ class BoussinesqBVPSolver(BVPSolverBase):
         if self.rank == 0:
             atmosphere = self.atmosphere_class(dimensions=1, comm=MPI.COMM_SELF, **atmosphere_kwargs)
             #Variables are T, dz(T), rho, integrated mass
-            atmosphere.problem = de.NLBVP(atmosphere.domain, variables=['T1', 'T1_z'], ncc_cutoff=tolerance)
-#            atmosphere.problem = de.NLBVP(atmosphere.domain, variables=['T1', 'T1_z','p1'], ncc_cutoff=tolerance)
+#            atmosphere.problem = de.NLBVP(atmosphere.domain, variables=['T1', 'T1_z'], ncc_cutoff=tolerance)
+            atmosphere.problem = de.NLBVP(atmosphere.domain, variables=['T1', 'T1_z','p1'], ncc_cutoff=tolerance)
 
             #Zero out old varables to make atmospheric substitutions happy.
             old_vars = ['u', 'w', 'u_z', 'w_z', 'dx(A)']
@@ -375,27 +383,35 @@ class BoussinesqBVPSolver(BVPSolverBase):
 
             T1 = solver.state['T1']
             T1_z = solver.state['T1_z']
-            P1 = atmosphere._new_field()
-            T1.antidifferentiate('z', ('right', 0), out=P1)
+            P1   = solver.state['p1']
+#            P1 = atmosphere._new_field()
+#            T1.antidifferentiate('z', ('right', 0), out=P1)
 
         # Create space for the returned profiles on all processes.
         return_dict = dict()
         for v in self.VARS.keys():
             return_dict[v] = np.zeros(self.nz, dtype=np.float64)
-            return_dict[v] -= self.get_full_profile(v)
+#            return_dict[v] -= self.get_full_profile(v)
 
         if self.rank == 0:
             #Appropriately adjust T1 in IVP
             T1.set_scales(self.nz/nz, keep_data=True)
-            return_dict['T1_IVP'] = T1['g'] + self.profiles_dict['T1_IVP']
+#            return_dict['T1_IVP'] += T1['g'] + self.profiles_dict['T1_IVP']
+#            return_dict['T1_IVP'] = T1['g']
+            return_dict['T1_IVP'] = T1['g'] + self.profiles_dict['T1_IVP'] - self.profiles_dict_curr['T1_IVP']
 
             #Appropriately adjust T1_z in IVP
             T1_z.set_scales(self.nz/nz, keep_data=True)
-            return_dict['T1_z_IVP'] = T1_z['g'] + self.profiles_dict['T1_z_IVP']
+#            return_dict['T1_z_IVP'] += T1_z['g'] + self.profiles_dict['T1_z_IVP']
+#            return_dict['T1_z_IVP'] = T1_z['g'] 
+            return_dict['T1_z_IVP'] = T1_z['g']  + self.profiles_dict['T1_z_IVP'] - self.profiles_dict_curr['T1_z_IVP']
 
             #Appropriately adjust p in IVP
             P1.set_scales(self.nz/nz, keep_data=True)
-            return_dict['p_IVP'] = P1['g'] + self.profiles_dict['p_IVP']
+#            return_dict['p_IVP'] += P1['g'] + self.profiles_dict['p_IVP']
+#            return_dict['p_IVP'] = P1['g'] 
+            return_dict['p_IVP'] = P1['g']   + self.profiles_dict['p_IVP'] - self.profiles_dict_curr['p_IVP']
+            print(return_dict)
         else:
             for v in self.VARS.keys():
                 return_dict[v] *= 0
