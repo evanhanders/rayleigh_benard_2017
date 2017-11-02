@@ -246,7 +246,9 @@ class BVPSolverBase:
             keys += ['filling_up', 'filling_down']
         for k in keys:
             if self.rank == 0:
+#                print(self.profiles_dict[k], self.avg_time_elapsed)
                 self.profiles_dict[k] /= self.avg_time_elapsed
+#                print(self.profiles_dict[k], self.avg_time_elapsed)
                 self.profiles_dict_curr[k] = 1*self.profiles_dict[k]
 #                if self.completed_bvps > 0:
 #                    self.profiles_dict[k] += self.profiles_dict_last[k]
@@ -272,7 +274,6 @@ class BoussinesqBVPSolver(BVPSolverBase):
                 ('T1_IVP',              ('T1', 0)),                      
                 ('T1_z_IVP',            ('T1_z', 0)),                    
                 ('p_IVP',               ('p', 0)), 
-                ('energy_forcing',      ('((1/P)*(u*dx(T1) + w*(T0_z + T1_z)) - Lap(T1, T1_z))', 0)),
                 ('T_forcing',           ('(P*Lap(T1, T1_z) - UdotGrad((T0+T1), (T0_z+T1_z)))', 0)),
                 ('T_z_forcing',         ('dz(P*Lap(T1, T1_z) - UdotGrad((T0+T1), (T0_z+T1_z)))', 0)),
                 ('T_zz_forcing',        ('dz(dz((P*Lap(T1, T1_z) - UdotGrad((T0+T1), (T0_z+T1_z)))))', 0)),
@@ -293,7 +294,7 @@ class BoussinesqBVPSolver(BVPSolverBase):
         problem.add_equation("dz(T1) - T1_z = 0")
 
         logger.debug('Setting energy equation')
-        problem.add_equation(("dz(T1_z) = energy_forcing"))
+        problem.add_equation(("P*dz(T1_z) = -T_forcing"))
         
     def _set_BCs(self, atmosphere, bc_kwargs):
         """ Sets standard thermal BCs, and also enforces the m = 0 pressure constraint """
@@ -337,16 +338,16 @@ class BoussinesqBVPSolver(BVPSolverBase):
                 plt.savefig('{}_{}.png'.format(k, self.completed_bvps))
                 plt.close()
             
-            T1 = atmosphere._new_field()
-            T1_z = atmosphere._new_field()
-            T1_zz = atmosphere._new_field()
-
-            delta_t = atmosphere.thermal_time*(1 - np.exp(-0.05))
-            T1.set_scales(self.nz/nz, keep_data=False)
-            T1['g'] = self.profiles_dict['T_forcing']*delta_t
+#            T1 = atmosphere._new_field()
+#            T1_z = atmosphere._new_field()
+#            T1_zz = atmosphere._new_field()
+#
+#            delta_t = atmosphere.thermal_time*(1 - np.exp(-0.05))
+#            T1.set_scales(self.nz/nz, keep_data=False)
+#            T1['g'] = self.profiles_dict['T_forcing']*delta_t
 #            T1_z.set_scales(self.nz/nz, keep_data=False)
 #            T1_z['g'] = self.profiles_dict['T_z_forcing']*delta_t
-            T1.differentiate('z', out=T1_z)
+#            T1.differentiate('z', out=T1_z)
 
 #            T1_zz.set_scales(self.nz/nz, keep_data=False)
 #            T1_zz['g'] = self.profiles_dict['T_zz_forcing']*atmosphere.thermal_time*(1 - np.exp(-0.2))
@@ -354,29 +355,28 @@ class BoussinesqBVPSolver(BVPSolverBase):
 #            T1_z.antidifferentiate('z', ('right', 0), out=T1)
 
             #Add time and horizontally averaged profiles from IVP to the problem as parameters
-#            for k in keys:
-#                f = atmosphere._new_ncc()
-#                f.set_scales(self.nz / nz, keep_data=True) #If nz(bvp) =/= nz(ivp), this allows interaction between them
-#                f['g'] = self.profiles_dict[k]
-#                atmosphere.problem.parameters[k] = f
-#
-#            self._set_eqns(atmosphere.problem)
-#            self._set_BCs(atmosphere, bc_kwargs)
-#
-#            # Solve the BVP
-#            solver = atmosphere.problem.build_solver()
-#
-#            pert = solver.perturbations.data
-#            pert.fill(1+tolerance)
-#            while np.sum(np.abs(pert)) > tolerance:
-#                solver.newton_iteration()
-#                logger.info('Perturbation norm: {}'.format(np.sum(np.abs(pert))))
-#
-#            T1 = solver.state['T1']
-#            T1_z = solver.state['T1_z']
-#            P1 = solver.state['p1']
+            for k in keys:
+                f = atmosphere._new_ncc()
+                f.set_scales(self.nz / nz, keep_data=True) #If nz(bvp) =/= nz(ivp), this allows interaction between them
+                f['g'] = self.profiles_dict[k]
+                atmosphere.problem.parameters[k] = f
+
+            self._set_eqns(atmosphere.problem)
+            self._set_BCs(atmosphere, bc_kwargs)
+
+            # Solve the BVP
+            solver = atmosphere.problem.build_solver()
+
+            pert = solver.perturbations.data
+            pert.fill(1+tolerance)
+            while np.sum(np.abs(pert)) > tolerance:
+                solver.newton_iteration()
+                logger.info('Perturbation norm: {}'.format(np.sum(np.abs(pert))))
+
+            T1 = solver.state['T1']
+            T1_z = solver.state['T1_z']
             P1 = atmosphere._new_field()
-            P1['g'] = 0
+            T1.antidifferentiate('z', ('right', 0), out=P1)
 
         # Create space for the returned profiles on all processes.
         return_dict = dict()
