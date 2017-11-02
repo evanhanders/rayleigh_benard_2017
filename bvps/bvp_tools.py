@@ -386,15 +386,15 @@ class BoussinesqBVPSolver(BVPSolverBase):
         if self.rank == 0:
             #Appropriately adjust T1 in IVP
             T1.set_scales(self.nz/nz, keep_data=True)
-            return_dict['T1_IVP'] = T1['g']# + self.profiles_dict['T1_IVP'] - self.profiles_dict_curr['T1_IVP']
+            return_dict['T1_IVP'] = T1['g'] + self.profiles_dict['T1_IVP'] - self.get_full_profile('T1_IVP')
 
             #Appropriately adjust T1_z in IVP
             T1_z.set_scales(self.nz/nz, keep_data=True)
-            return_dict['T1_z_IVP'] = T1_z['g']# + self.profiles_dict['T1_z_IVP'] - self.profiles_dict_curr['T1_z_IVP']
+            return_dict['T1_z_IVP'] = T1_z['g'] + self.profiles_dict['T1_z_IVP'] - self.get_full_profile('T1_z_IVP')
 
             #Appropriately adjust p in IVP
             P1.set_scales(self.nz/nz, keep_data=True)
-            return_dict['p_IVP'] = P1['g']# + self.profiles_dict['p_IVP'] - self.profiles_dict_curr['p_IVP']
+            return_dict['p_IVP'] = P1['g'] + self.profiles_dict['p_IVP'] - self.get_full_profile('p_IVP')
             print(return_dict)
 
         self.comm.Barrier()
