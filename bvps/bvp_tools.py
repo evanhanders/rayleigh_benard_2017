@@ -382,21 +382,24 @@ class BoussinesqBVPSolver(BVPSolverBase):
         return_dict = dict()
         for v in self.VARS.keys():
             return_dict[v] = np.zeros(self.nz, dtype=np.float64)
+            return_dict[v] -= self.get_full_profile(v)
 
         if self.rank == 0:
             #Appropriately adjust T1 in IVP
             T1.set_scales(self.nz/nz, keep_data=True)
-            return_dict['T1_IVP'] = T1['g'] + self.profiles_dict['T1_IVP'] - self.get_full_profile('T1_IVP')
+            return_dict['T1_IVP'] = T1['g'] + self.profiles_dict['T1_IVP']
 
             #Appropriately adjust T1_z in IVP
             T1_z.set_scales(self.nz/nz, keep_data=True)
-            return_dict['T1_z_IVP'] = T1_z['g'] + self.profiles_dict['T1_z_IVP'] - self.get_full_profile('T1_z_IVP')
+            return_dict['T1_z_IVP'] = T1_z['g'] + self.profiles_dict['T1_z_IVP']
 
             #Appropriately adjust p in IVP
             P1.set_scales(self.nz/nz, keep_data=True)
-            return_dict['p_IVP'] = P1['g'] + self.profiles_dict['p_IVP'] - self.get_full_profile('p_IVP')
-            print(return_dict)
-
+            return_dict['p_IVP'] = P1['g'] + self.profiles_dict['p_IVP']
+        else:
+            for v in self.VARS.keys():
+                return_dict[v] *= 0
+        
         self.comm.Barrier()
         # Communicate output profiles from proc 0 to all others.
         for v in self.VARS.keys():
