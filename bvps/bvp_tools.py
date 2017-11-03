@@ -248,7 +248,7 @@ class BVPSolverBase:
                     bad_places = np.where(np.abs(self.current_local_avg[fd]) < 1e-7)
                     self.current_local_l2[fd] = np.mean(np.abs((self.current_local_avg[fd] - avg)/self.current_local_avg[fd]))
                     self.current_local_avg[fd] = avg
-                    print(fd, self.current_local_l2[fd], avg)
+#                    print(fd, self.current_local_l2[fd], avg)
                 if self.current_local_l2[fd] >= self.bvp_run_threshold:
                     ready_for_bvp = False
             self.first_l2 = False
@@ -267,8 +267,7 @@ class BVPSolverBase:
 
     def check_if_solve(self):
         """ Returns a boolean.  If True, it's time to solve a BVP """
-        return self.avg_started and (self.do_bvp or \
-                    (self.avg_time_elapsed >= self.bvp_time)*(self.completed_bvps < self.num_bvps))
+        return self.avg_started and self.do_bvp and (self.completed_bvps < self.num_bvps)
 
     def _reset_fields(self):
         """ Reset all local fields after doing a BVP """
