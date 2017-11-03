@@ -80,7 +80,7 @@ class BVPSolverBase:
         self.nz         = nz
 
         #Specify how BVPs work
-        self.bvp_time           = bvp_time
+        self.bvp_time           = np.inf#bvp_time
         self.num_bvps           = num_bvps
         self.completed_bvps     = 0
         self.avg_time_elapsed   = 0.
@@ -219,7 +219,7 @@ class BVPSolverBase:
             #Update sums for averages
             self.avg_time_elapsed += dt
             ready_for_bvp = True
-            for fd in self.FIELDS.keys():
+            for fd, info in self.FIELDS.items():
                 field, avg_type = self.FIELDS[fd]
                 self.update_local_profiles(dt, fd, avg_type=avg_type)
                 avg = self.partial_prof_dict[fd]/self.avg_time_elapsed
@@ -229,8 +229,10 @@ class BVPSolverBase:
                     ready_for_bvp = False
                     continue
                 else:
+                    bad_places = np.where(np.abs(self.current_local_avg[fd]) < 1e-7)
                     self.current_local_l2[fd] = np.mean(np.abs((self.current_local_avg[fd] - avg)/self.current_local_avg[fd]))
                     self.current_local_avg[fd] = avg
+                    print(fd, self.current_local_l2[fd], avg)
                 if self.current_local_l2[fd] >= self.bvp_run_threshold:
                     ready_for_bvp = False
             self.first_l2 = False
@@ -289,16 +291,16 @@ class BVPSolverBase:
                 self.profiles_dict[fd] = curr_profile/self.avg_time_elapsed
                 self.profiles_dict_curr[fd] = 1*self.profiles_dict[fd]
 
-            if item[1] == 0:
-                plt.plot(self.solver.domain.grid(-1)[0], self.profiles_dict[fd])
-                plt.savefig('{}.png'.format(fd))
-                plt.close()
-            else:
-                xx, yy = np.meshgrid(self.solver.domain.grid(0), self.solver.domain.grid(1)[0], indexing='ij')
-                plt.pcolormesh(xx, yy, self.profiles_dict[fd], cmap='RdBu_r')
-                plt.savefig('{}.png'.format(fd))
-                plt.close()
-
+#            if item[1] == 0:
+#                plt.plot(self.solver.domain.grid(-1)[0], self.profiles_dict[fd])
+#                plt.savefig('{}.png'.format(fd))
+#                plt.close()
+#            else:
+#                xx, yy = np.meshgrid(self.solver.domain.grid(0), self.solver.domain.grid(1)[0], indexing='ij')
+#                plt.pcolormesh(xx, yy, self.profiles_dict[fd], cmap='RdBu_r')
+#                plt.savefig('{}.png'.format(fd))
+#                plt.close()
+#
         # Restart counters for next BVP
         self.avg_time_elapsed   = 0.
         self.avg_time_start     = self.solver.sim_time
@@ -315,20 +317,23 @@ class BoussinesqBVPSolver(BVPSolverBase):
     # 0 - full avg profile
     # 1 - full avg field
     FIELDS = OrderedDict([  
-                ('T1_IVP',              ('T1', 0)),                      
-                ('T1_z_IVP',            ('T1_z', 0)),                    
-                ('T1_IVP_full',         ('T1', 1)),                      
-                ('T1_z_IVP_full',       ('T1_z', 1)),                    
-                ('T1_zz_IVP_full',      ('dz(T1_z)', 1)),                    
-                ('w_IVP_full',          ('w', 1)),                    
-                ('wz_IVP_full',          ('wz', 1)),                    
-                ('u_IVP_full',          ('u', 1)),                    
-                ('p_IVP',               ('p', 0)), 
-                ('T_forcing',           ('(UdotGrad((T0+T1), (T0_z+T1_z)) - dz(P * T1_z))', 0)),
+                ('UdotGrad_T',          ('UdotGrad((T0+T1), (T1_z + T0_z))', 0)),                      
+                ('Lap_T',               ('Lap(T1, T1_z)', 0)),                      
+#                ('w_IVP',               ('w', 0)),                      
+#                ('T1_IVP',              ('T1', 0)),                      
+#                ('T1_z_IVP',            ('T1_z', 0)),                    
+#                ('T1_IVP_full',         ('T1', 1)),                      
+#                ('T1_z_IVP_full',       ('T1_z', 1)),                    
+#                ('T1_zz_IVP_full',      ('dz(T1_z)', 1)),                    
+#                ('w_IVP_full',          ('w', 1)),                    
+#                ('wz_IVP_full',          ('wz', 1)),                    
+#                ('u_IVP_full',          ('u', 1)),                    
+#                ('p_IVP',               ('p', 0)), 
+#                ('T_forcing',           ('(UdotGrad((T0+T1), (T0_z+T1_z)) - dz(P * T1_z))', 0)),
 #                ('T_forcing',           ('dz(w*(T1) - P * T1_z)', 0)),
-                ('Lap_w',               ('Lap(w, wz)', 0)),
-                ('UdotGrad_w',          ('UdotGrad(w, wz)', 0)),
-                ('w_forcing',           ('(-UdotGrad(w, wz) - dz(p) + T1 + R*Lap(w, wz))', 0)),
+#                ('Lap_w',               ('Lap(w, wz)', 0)),
+#                ('UdotGrad_w',          ('UdotGrad(w, wz)', 0)),
+#                ('w_forcing',           ('(-UdotGrad(w, wz) - dz(p) + T1 + R*Lap(w, wz))', 0)),
                         ])
     VARS   = OrderedDict([  
                 ('T1_IVP',              'T1'),
@@ -352,10 +357,10 @@ class BoussinesqBVPSolver(BVPSolverBase):
         problem.add_equation("dz(T1) - T1_z = 0")
 
         logger.debug('Setting energy equation')
-        problem.add_equation(("P*dz(T1_z) = T_forcing"))
+        problem.add_equation(("P*dz(T1_z) = UdotGrad_T - P*Lap_T"))
         
         logger.debug('Setting HS equation')
-        problem.add_equation(("dz(p1) - T1 =  w_forcing"))
+        problem.add_equation(("dz(p1) - T1 = 0"))# w_forcing"))
         
     def _set_BCs(self, atmosphere, bc_kwargs):
         """ Sets standard thermal BCs, and also enforces the m = 0 pressure constraint """
@@ -366,7 +371,7 @@ class BoussinesqBVPSolver(BVPSolverBase):
             atmosphere.problem.meta[key]['z']['dirichlet'] = True
 
     def _update_profiles_dict(self, solver, atmosphere, vel_adjust_factor):
-
+        return 1, 1e-16
         #Get solver states
         T1 = solver.state['T1']
         T1_z = solver.state['T1_z']
