@@ -393,8 +393,17 @@ class BoussinesqBVPSolver(BVPSolverBase):
                 P1_z = atmosphere._new_field()
                 P1.differentiate('z', out=P1_z)
                 P1_z.set_scales(self.nz/nz, keep_data=True)
-
                 
+                atmosphere.T0.set_scales(self.nz/nz, keep_data=True)
+                enth_flux = (self.profiles_dict['w_IVP_full']*(self.profiles_dict['T1_IVP_full']+atmosphere.T0['g'])).mean(axis=0)
+                mid_enth_flux = enth_flux[int(len(enth_flux)/2)]
+                vel_adjust = atmosphere.P / mid_enth_flux
+                vel_adjust_factor *= vel_adjust
+                self.profiles_dict['w_IVP_full'] *= vel_adjust
+                self.profiles_dict['wz_IVP_full'] *= vel_adjust
+                self.profiles_dict['UdotGrad_w'] *= vel_adjust**2
+                self.profiles_dict['Lap_w'] *= vel_adjust
+
                 self.profiles_dict['w_forcing'] = \
                     (-self.profiles_dict['UdotGrad_w'] - P1_z['g'] \
                      + self.profiles_dict['T1_IVP_full'] \
@@ -408,13 +417,7 @@ class BoussinesqBVPSolver(BVPSolverBase):
                       (self.profiles_dict['T1_IVP_full'] + atmosphere.T0['g'])\
                      - atmosphere.P*self.profiles_dict['T1_zz_IVP_full']).mean(axis=0)
 
-                atmosphere.T0.set_scales(self.nz/nz, keep_data=True)
-                enth_flux = (self.profiles_dict['w_IVP_full']*(self.profiles_dict['T1_IVP_full']+atmosphere.T0['g'])).mean(axis=0)
-                mid_enth_flux = enth_flux[int(len(enth_flux)/2)]
-                vel_adjust = atmosphere.P / mid_enth_flux
-                vel_adjust_factor *= vel_adjust
-                self.profiles_dict['w_IVP_full'] *= vel_adjust
-                self.profiles_dict['wz_IVP_full'] *= vel_adjust
+
 
                 #Appropriately adjust T1 in IVP
                 T1.set_scales(self.nz/nz, keep_data=True)
