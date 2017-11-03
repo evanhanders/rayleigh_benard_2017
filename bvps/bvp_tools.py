@@ -26,9 +26,11 @@ class BVPSolverBase:
 
     CLASS VARIABLES
     ---------------
-        FIELDS - An OrderedDict of strings of which the time- and horizontally- averaged 
-                 profiles are tracked (and fed into the BVP)
-        VARS   - An OrderedDict of variables which will be updated by the BVP
+        FIELDS     - An OrderedDict of strings of which the time- and horizontally- averaged 
+                     profiles are tracked (and fed into the BVP)
+        VARS       - An OrderedDict of variables which will be updated by the BVP
+        VEL_VARS   - An OrderedDict of variables which contain info about the velocity field;
+                        may be updated by BVP.
 
     Object Attributes:
     ------------------
@@ -37,15 +39,23 @@ class BVPSolverBase:
         avg_time_start      - Simulation time at which average began
         bvp_equil_time      - Amount of sim time to wait for velocities to converge before starting averages
                                 at the beginning of IVP or after a BVP is solved
-        bvp_time            - Length of sim time to average over before doing bvp
         bvp_transient_time  - Amount of time to wait at the beginning of the sim
+        bvp_run_threshold   - Degree of convergence required on time averages before doing BVP
+        bvp_l2_check_time   - How often to check for convergence, in simulation time
+        bvp_l2_last_check_time - Last time we checked if avgs were converged
+        current_local_avg   - Current value of the local portion of the time average of profiles
+        current_local_l2    - The avg of the abs() of the change in the avg profile compared to the previous timestep.
         comm                - COMM_WORLD for IVP
         completed_bvps      - # of BVPs that have been completed during this run
+        do_bvp              - If True, average profiles are converged, do BVP.
+        first_l2            - If True, we haven't taken an L2 average for convergence yet.
         flow                - A dedalus flow_tools.GlobalFlowProperty object for the IVP solver which is tracking
                                 the Reynolds number, and will track FIELDS variables
         n_per_proc          - Number of z-points per core (for parallelization)
-        num_bvps            - Total number of BVPs to complete
+        num_bvps            - Total (max) number of BVPs to complete
+        nx                  - x-resolution of the IVP grid
         nz                  - z-resolution of the IVP grid
+        partial_prof_dict   - a dictionary containing local contributions to the averages of FIELDS
         profiles_dict       - a dictionary containing the time/horizontal average of FIELDS
         profiles_dict_last  - a dictionary containing the time/horizontal average of FIELDS from the previous bvp
         profiles_dict_curr  - a dictionary containing the time/horizontal average of FIELDS for current atmosphere state
@@ -60,18 +70,24 @@ class BVPSolverBase:
     VARS   = None
     VEL_VARS   = None
 
-    def __init__(self, nx, nz, flow, comm, solver, bvp_time, num_bvps, bvp_equil_time, bvp_transient_time=0,
-                 bvp_pairs=False, bvp_run_threshold=1e-3, bvp_l2_check_time=1):
+    def __init__(self, nx, nz, flow, comm, solver, num_bvps, bvp_equil_time, bvp_transient_time=20,
+                 bvp_run_threshold=1e-2, bvp_l2_check_time=1):
         """
         Initializes the object; grabs solver states and makes room for profile averages
+        
         Arguments:
-        nz              - the vertical resolution of the IVP
-        flow            - a dedalus.extras.flow_tools.GlobalFlowProperty for the IVP solver
-        comm            - An MPI comm object for the IVP solver
-        solver          - The IVP solver
-        bvp_time        - How often to perform a BVP, in sim time units
-        num_bvps        - Maximum number of BVPs to solve
-        bvp_equil_time  - Sim time to wait after a bvp before beginning averages for the next one
+        nx                  - the horizontal resolution of the IVP
+        nz                  - the vertical resolution of the IVP
+        flow                - a dedalus.extras.flow_tools.GlobalFlowProperty for the IVP solver
+        comm                - An MPI comm object for the IVP solver
+        solver              - The IVP solver
+        num_bvps            - Maximum number of BVPs to solve
+        bvp_equil_time      - Sim time to wait after a bvp before beginning averages for the next one
+        bvp_transient_time  - Sim time to wait at beginning of simulation before starting average
+        bvp_run_threshold   - Level of convergence that must be reached in statistical averages
+                                before doing a BVP (1e-2 = 1% variation OK, 1e-3 = 0.1%, so on)
+        bvp_l2_check_time   - Sim time to wait between communications to see if we're converged
+                                (so that we don't "check for convergence" on all processes at every timestep):w
         """
         #Get info about IVP
         self.flow       = flow
@@ -80,7 +96,6 @@ class BVPSolverBase:
         self.nz         = nz
 
         #Specify how BVPs work
-        self.bvp_time           = np.inf#bvp_time
         self.num_bvps           = num_bvps
         self.completed_bvps     = 0
         self.avg_time_elapsed   = 0.
@@ -88,13 +103,13 @@ class BVPSolverBase:
         self.bvp_equil_time     = bvp_equil_time
         self.bvp_transient_time = bvp_transient_time
         self.avg_started        = False
-        self.bvp_pairs          = bvp_pairs
 
-        self.bvp_run_threshold = bvp_run_threshold
-        self.bvp_l2_check_time = 1
+        # Stop parameters for bvps
+        self.bvp_run_threshold      = bvp_run_threshold
+        self.bvp_l2_check_time      = 1
         self.bvp_l2_last_check_time = 0
-        self.do_bvp            = False
-        self.first_l2          = True
+        self.do_bvp                 = False
+        self.first_l2               = True
 
         #Get info about MPI distribution
         self.comm           = comm
@@ -103,7 +118,6 @@ class BVPSolverBase:
         self.n_per_proc     = self.nz/self.size
 
         # Set up tracking dictionaries for flow fields
-        added_fields = []
         for fd in self.FIELDS.keys():
             field, avg_type = self.FIELDS[fd]
             if avg_type == 0:
@@ -163,6 +177,8 @@ class BVPSolverBase:
             self.partial_prof_dict[prof_name] += \
                         dt*self.flow.properties['{}'.format(prof_name)]['g']
 
+    def _update_profiles_dict(self, *args, **kwargs):
+        pass
 
     def get_full_profile(self, prof_name, avg_type=0):
         """
@@ -216,7 +232,7 @@ class BVPSolverBase:
                 if (self.solver.sim_time - self.avg_time_start) < self.bvp_equil_time:
                     return
 
-            #Update sums for averages
+            #Update sums for averages. Check to see if we're converged enough for a BVP.
             self.avg_time_elapsed += dt
             ready_for_bvp = True
             for fd, info in self.FIELDS.items():
@@ -255,17 +271,14 @@ class BVPSolverBase:
                     (self.avg_time_elapsed >= self.bvp_time)*(self.completed_bvps < self.num_bvps))
 
     def _reset_fields(self):
+        """ Reset all local fields after doing a BVP """
         self.do_bvp = False
         self.first_l2 = False
         if self.rank != 0:
             return
         # Reset profile arrays for getting the next bvp average
         for fd, info in self.FIELDS.items():
-#            if self.completed_bvps == 1:
             self.profiles_dict_last[fd] = self.profiles_dict_curr[fd]
-#            else:
-#                self.profiles_dict_last[fd] += self.profiles_dict_curr[fd]
-#                self.profiles_dict_last[fd] /= 2.
             self.profiles_dict[fd]      *= 0
             self.partial_prof_dict[fd]  *= 0
             self.current_local_avg[fd]  *= 0
