@@ -334,15 +334,15 @@ class BoussinesqBVPSolver(BVPSolverBase):
                 ('T_forcing',           ('dz(w*(T0+T1) - P *(T0_z+T1_z))', 0)),                      
                 ('extra_T_forcing',     ('dx(u*(T1) - P *dx(T1))', 0)),                      
 #                ('w_IVP',               ('w', 0)),                      
-#                ('T1_IVP',              ('T1', 0)),                      
-#                ('T1_z_IVP',            ('T1_z', 0)),                    
+                ('T1_IVP',              ('T1', 0)),                      
+                ('T1_z_IVP',            ('T1_z', 0)),                    
 #                ('T1_IVP_full',         ('T1', 1)),                      
 #                ('T1_z_IVP_full',       ('T1_z', 1)),                    
 #                ('T1_zz_IVP_full',      ('dz(T1_z)', 1)),                    
 #                ('w_IVP_full',          ('w', 1)),                    
 #                ('wz_IVP_full',          ('wz', 1)),                    
 #                ('u_IVP_full',          ('u', 1)),                    
-#                ('p_IVP',               ('p', 0)), 
+                ('p_IVP',               ('p', 0)), 
 #                ('T_forcing',           ('(UdotGrad((T0+T1), (T0_z+T1_z)) - dz(P * T1_z))', 0)),
 #                ('T_forcing',           ('dz(w*(T1) - P * T1_z)', 0)),
 #                ('Lap_w',               ('Lap(w, wz)', 0)),
@@ -500,7 +500,6 @@ class BoussinesqBVPSolver(BVPSolverBase):
 
                 vel_adjust_factor, avg_change =\
                         self._update_profiles_dict(solver, atmosphere, vel_adjust_factor, first=first)
-                first=False
 
                 T1 = solver.state['T1']
                 T1_z = solver.state['T1_z']
@@ -517,6 +516,13 @@ class BoussinesqBVPSolver(BVPSolverBase):
                 #Appropriately adjust p in IVP
                 P1.set_scales(self.nz/nz, keep_data=True)
                 return_dict['p_IVP'] += P1['g']
+                
+                if first:
+                    return_dict['T1_IVP'] += self.profiles_dict['T1_IVP']
+                    return_dict['T1_z_IVP'] += self.profiles_dict['T1_z_IVP']
+                    return_dict['p_IVP'] += self.profiles_dict['p_IVP']
+     
+                first=False
         else:
             for v in self.VARS.keys():
                 return_dict[v] *= 0
@@ -537,6 +543,8 @@ class BoussinesqBVPSolver(BVPSolverBase):
 
         # Actually update IVP states
         for v in self.VARS.keys():
+            self.solver_states[v].set_scales(1, keep_data=True)
+            self.solver_states[v]['g'] -= self.solver_states[v]['g'].mean(axis=0)
             self.solver_states[v].set_scales(1, keep_data=True)
             self.solver_states[v]['g'] += return_dict[v][self.n_per_proc*self.rank:self.n_per_proc*(self.rank+1)]
         for v in self.VEL_VARS.keys():
