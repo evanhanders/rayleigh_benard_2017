@@ -275,12 +275,11 @@ class BVPSolverBase:
         """ Reset all local fields after doing a BVP """
         self.do_bvp = False
         self.first_l2 = False
-        if self.rank != 0:
-            return
         # Reset profile arrays for getting the next bvp average
         for fd, info in self.FIELDS.items():
-            self.profiles_dict_last[fd] = self.profiles_dict_curr[fd]
-            self.profiles_dict[fd]      *= 0
+            if self.rank == 0:
+                self.profiles_dict_last[fd] = self.profiles_dict_curr[fd]
+                self.profiles_dict[fd]      *= 0
             self.partial_prof_dict[fd]  *= 0
             self.current_local_avg[fd]  *= 0
             self.current_local_l2[fd]  *= 0
