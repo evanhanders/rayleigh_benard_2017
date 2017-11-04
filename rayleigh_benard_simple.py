@@ -39,7 +39,7 @@ Options:
     --root_dir=<dir>           Root directory for output [default: ./]
 
     --do_bvp                             If flagged, do BVPs at regular intervals when Re > 1 to converge faster
-    --num_bvps=<num>                     Max number of bvps to solve [default: 10]
+    --num_bvps=<num>                     Max number of bvps to solve [default: 1]
     --bvp_equil_time=<time>              How long to wait after a previous BVP before starting to average for next one, in tbuoy [default: 10]
     --bvp_transient_time=<time>          How long to wait at beginning of run before starting to average for next one, in tbuoy [default: 10]
     --bvp_resolution_factor=<mult>       an int, how many times larger than nz should the bvp nz be? [default: 1]

@@ -51,6 +51,7 @@ class BVPSolverBase:
         first_l2            - If True, we haven't taken an L2 average for convergence yet.
         flow                - A dedalus flow_tools.GlobalFlowProperty object for the IVP solver which is tracking
                                 the Reynolds number, and will track FIELDS variables
+        min_bvp_time        - Minimum simulation time to wait between BVPs.
         n_per_proc          - Number of z-points per core (for parallelization)
         num_bvps            - Total (max) number of BVPs to complete
         nx                  - x-resolution of the IVP grid
@@ -71,7 +72,7 @@ class BVPSolverBase:
     VEL_VARS   = None
 
     def __init__(self, nx, nz, flow, comm, solver, num_bvps, bvp_equil_time, bvp_transient_time=20,
-                 bvp_run_threshold=1e-2, bvp_l2_check_time=1):
+                 bvp_run_threshold=1e-2, bvp_l2_check_time=1, min_bvp_time=20):
         """
         Initializes the object; grabs solver states and makes room for profile averages
         
@@ -97,6 +98,7 @@ class BVPSolverBase:
 
         #Specify how BVPs work
         self.num_bvps           = num_bvps
+        self.min_bvp_time       = min_bvp_time
         self.completed_bvps     = 0
         self.avg_time_elapsed   = 0.
         self.avg_time_start     = 0.
@@ -267,7 +269,7 @@ class BVPSolverBase:
 
     def check_if_solve(self):
         """ Returns a boolean.  If True, it's time to solve a BVP """
-        return self.avg_started and self.do_bvp and (self.completed_bvps < self.num_bvps)
+        return (self.avg_started and self.avg_time_elapsed >= self.min_bvp_time) and (self.do_bvp and (self.completed_bvps < self.num_bvps))
 
     def _reset_fields(self):
         """ Reset all local fields after doing a BVP """
@@ -332,7 +334,7 @@ class BoussinesqBVPSolver(BVPSolverBase):
                 ('enth_flux_IVP',       ('w*(T0+T1)', 0)),                      
                 ('T_z_IVP',             ('(T0_z+T1_z)', 0)),                      
                 ('T_forcing',           ('dz(w*(T0+T1) - P *(T0_z+T1_z))', 0)),                      
-                ('extra_T_forcing',     ('dx(u*(T1) - P *dx(T1))', 0)),                      
+#                ('extra_T_forcing',     ('dx(u*(T1) - P *dx(T1))', 0)),                      
 #                ('w_IVP',               ('w', 0)),                      
                 ('T1_IVP',              ('T1', 0)),                      
                 ('T1_z_IVP',            ('T1_z', 0)),                    
@@ -347,7 +349,7 @@ class BoussinesqBVPSolver(BVPSolverBase):
 #                ('T_forcing',           ('dz(w*(T1) - P * T1_z)', 0)),
 #                ('Lap_w',               ('Lap(w, wz)', 0)),
 #                ('UdotGrad_w',          ('UdotGrad(w, wz)', 0)),
-                ('w_forcing',           ('(-UdotGrad(w, wz) - dz(p) + T1 + R*Lap(w, wz))', 0)),
+#                ('w_forcing',           ('(-UdotGrad(w, wz) - dz(p) + T1 + R*Lap(w, wz))', 0)),
                         ])
     VARS   = OrderedDict([  
                 ('T1_IVP',              'T1'),
@@ -372,10 +374,10 @@ class BoussinesqBVPSolver(BVPSolverBase):
         problem.add_equation("dz(T1) - T1_z = 0")
 
         logger.debug('Setting energy equation')
-        problem.add_equation(("P*dz(T1_z) = T_forcing + extra_T_forcing"))#dz(enth_flux_IVP - P*(T_z_IVP))"))
+        problem.add_equation(("P*dz(T1_z) = T_forcing"))#+ extra_T_forcing"))#dz(enth_flux_IVP - P*(T_z_IVP))"))
         
         logger.debug('Setting HS equation')
-        problem.add_equation(("dz(p1) - T1 =  w_forcing"))
+        problem.add_equation(("dz(p1) - T1 = 0"))# w_forcing"))
         
     def _set_BCs(self, atmosphere, bc_kwargs):
         """ Sets standard thermal BCs, and also enforces the m = 0 pressure constraint """
