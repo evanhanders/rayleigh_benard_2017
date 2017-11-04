@@ -329,8 +329,10 @@ class BoussinesqBVPSolver(BVPSolverBase):
     # 0 - full avg profile
     # 1 - full avg field
     FIELDS = OrderedDict([  
-                ('UdotGrad_T',          ('UdotGrad((T0+T1), (T1_z + T0_z))', 0)),                      
-                ('Lap_T',               ('Lap(T1, T1_z)', 0)),                      
+                ('enth_flux_IVP',       ('w*(T0+T1)', 0)),                      
+                ('T_z_IVP',             ('(T0_z+T1_z)', 0)),                      
+                ('T_forcing',           ('dz(w*(T0+T1) - P *(T0_z+T1_z))', 0)),                      
+                ('extra_T_forcing',     ('dx(u*(T1) - P *dx(T1))', 0)),                      
 #                ('w_IVP',               ('w', 0)),                      
 #                ('T1_IVP',              ('T1', 0)),                      
 #                ('T1_z_IVP',            ('T1_z', 0)),                    
@@ -345,7 +347,7 @@ class BoussinesqBVPSolver(BVPSolverBase):
 #                ('T_forcing',           ('dz(w*(T1) - P * T1_z)', 0)),
 #                ('Lap_w',               ('Lap(w, wz)', 0)),
 #                ('UdotGrad_w',          ('UdotGrad(w, wz)', 0)),
-#                ('w_forcing',           ('(-UdotGrad(w, wz) - dz(p) + T1 + R*Lap(w, wz))', 0)),
+                ('w_forcing',           ('(-UdotGrad(w, wz) - dz(p) + T1 + R*Lap(w, wz))', 0)),
                         ])
     VARS   = OrderedDict([  
                 ('T1_IVP',              'T1'),
@@ -361,6 +363,7 @@ class BoussinesqBVPSolver(BVPSolverBase):
 
     def __init__(self, atmosphere_class, *args, **kwargs):
         self.atmosphere_class = atmosphere_class
+        self.plot_count = 0
         super(BoussinesqBVPSolver, self).__init__(*args, **kwargs)
     
     def _set_eqns(self, problem):
@@ -369,10 +372,10 @@ class BoussinesqBVPSolver(BVPSolverBase):
         problem.add_equation("dz(T1) - T1_z = 0")
 
         logger.debug('Setting energy equation')
-        problem.add_equation(("P*dz(T1_z) = UdotGrad_T - P*Lap_T"))
+        problem.add_equation(("P*dz(T1_z) = T_forcing + extra_T_forcing"))#dz(enth_flux_IVP - P*(T_z_IVP))"))
         
         logger.debug('Setting HS equation')
-        problem.add_equation(("dz(p1) - T1 = 0"))# w_forcing"))
+        problem.add_equation(("dz(p1) - T1 =  w_forcing"))
         
     def _set_BCs(self, atmosphere, bc_kwargs):
         """ Sets standard thermal BCs, and also enforces the m = 0 pressure constraint """
@@ -382,8 +385,7 @@ class BoussinesqBVPSolver(BVPSolverBase):
         for key in atmosphere.dirichlet_set:
             atmosphere.problem.meta[key]['z']['dirichlet'] = True
 
-    def _update_profiles_dict(self, solver, atmosphere, vel_adjust_factor):
-        return 1, 1e-16
+    def _update_profiles_dict(self, solver, atmosphere, vel_adjust_factor, first=False):
         #Get solver states
         T1 = solver.state['T1']
         T1_z = solver.state['T1_z']
@@ -391,60 +393,55 @@ class BoussinesqBVPSolver(BVPSolverBase):
 
 
         # Update temperature fields for next solve. May need to add some logic here if nx == nz.
-        T1.set_scales(self.nz/atmosphere.nz, keep_data=True)
-        self.profiles_dict['T1_IVP_full'] += T1['g']
         T1_z.set_scales(self.nz/atmosphere.nz, keep_data=True)
-        self.profiles_dict['T1_z_IVP_full'] += T1_z['g']
-        T1_zz = atmosphere._new_field()
-        T1_z.differentiate('z', out=T1_zz)
-        T1_zz.set_scales(self.nz/atmosphere.nz, keep_data=True)
-        self.profiles_dict['T1_zz_IVP_full'] += T1_zz['g']
+        self.profiles_dict['T_z_IVP'] += T1_z['g']
 
-        # Update p.
-        P1.set_scales(self.nz/atmosphere.nz, keep_data=True)
-        self.profiles_dict['p_IVP'] += P1['g']
-        P1_z = atmosphere._new_field()
-        P1.differentiate('z', out=P1_z)
-        P1_z.set_scales(self.nz/atmosphere.nz, keep_data=True)
-        
+#        plt.plot(-atmosphere.P*self.profiles_dict['T_z_IVP']+self.profiles_dict['enth_flux_IVP'])
+#        plt.plot(-atmosphere.P*self.profiles_dict['T_z_IVP'])
+#        plt.plot(self.profiles_dict['enth_flux_IVP'])
+#        plt.savefig('fluxes_{:04d}.png'.format(self.plot_count))
+#        plt.close()
+#        self.plot_count += 1
+
+
+
         # Calculate enth flux and update velocity fields.
         atmosphere.T0.set_scales(self.nz/atmosphere.nz, keep_data=True)
-        enth_flux           = (self.profiles_dict['w_IVP_full']\
-                              *(self.profiles_dict['T1_IVP_full']+atmosphere.T0['g'])).mean(axis=0)
-        mid_enth_flux       = enth_flux[int(len(enth_flux)/2)]
-        vel_adjust          = atmosphere.P / mid_enth_flux
+        kappa_flux          = -atmosphere.P * self.profiles_dict['T_z_IVP']
+        tot_flux            = kappa_flux + self.profiles_dict['enth_flux_IVP']
+        min_kap_flux        = np.min(kappa_flux)
+        if min_kap_flux < 0:# and first:
+            new_enth_flux       = min_kap_flux
+            argmin_kap_flux     = np.argmin(kappa_flux)
+            enth_flux_factor    = 1 + new_enth_flux/self.profiles_dict['enth_flux_IVP'][argmin_kap_flux]
+            vel_adjust          = enth_flux_factor
+            print(new_enth_flux, enth_flux_factor)
+        else:
+            vel_adjust          = 1
         vel_adjust_factor   *= vel_adjust
-        self.profiles_dict['w_IVP_full']  *= vel_adjust
-        self.profiles_dict['wz_IVP_full'] *= vel_adjust
-        self.profiles_dict['UdotGrad_w']  *= vel_adjust**2
-        self.profiles_dict['Lap_w']       *= vel_adjust
+        self.profiles_dict['enth_flux_IVP']  *= vel_adjust
 
-        self.profiles_dict['w_forcing'] = \
-            (-self.profiles_dict['UdotGrad_w'] - P1_z['g'] \
-             + self.profiles_dict['T1_IVP_full'] \
-             + atmosphere.R*self.profiles_dict['Lap_w']).mean(axis=0)
-        atmosphere.T0_z.set_scales(self.nz/atmosphere.nz, keep_data=True)
-        atmosphere.T0.set_scales(self.nz/atmosphere.nz, keep_data=True)
-        # w * dz(T) + T * dz(w) - P*dz(T_z)
-        self.profiles_dict['T_forcing'] = \
-            (self.profiles_dict['w_IVP_full']\
-             *(self.profiles_dict['T1_z_IVP_full']+atmosphere.T0_z['g'])\
-             + self.profiles_dict['wz_IVP_full'] * \
-              (self.profiles_dict['T1_IVP_full'] + atmosphere.T0['g'])\
-             - atmosphere.P*self.profiles_dict['T1_zz_IVP_full']).mean(axis=0)
-
+        f = atmosphere._new_field()
+        df = atmosphere._new_field()
+        f.set_scales(self.nz/atmosphere.nz, keep_data=False)
+        f['g'] = self.profiles_dict['enth_flux_IVP'] - atmosphere.P * self.profiles_dict['T_z_IVP']
+        f.differentiate('z', out=df)
+        df.set_scales(self.nz/atmosphere.nz, keep_data=True)
+        self.profiles_dict['T_forcing'] = df['g']
+        
+#        self.profiles_dict['w_forcing'] *= 0
+#        self.profiles_dict['extra_T_forcing'] *= 0 
 
         #Report
         avg_change = np.mean(T1['g'])
         logger.info('avg change T1: {}'.format(avg_change))
         logger.info('vel_adj factor: {}'.format(vel_adjust))
-#        logger.info('T1 change: {}'.format(T1['g']))
 
         return vel_adjust_factor, np.mean(np.abs(T1['g']))
 
 
 
-    def solve_BVP(self, atmosphere_kwargs, diffusivity_args, bc_kwargs, tolerance=1e-13):
+    def solve_BVP(self, atmosphere_kwargs, diffusivity_args, bc_kwargs, tolerance=1e-10):
         """
         Solves a BVP in a 2D Boussinesq box.
 
@@ -465,7 +462,8 @@ class BoussinesqBVPSolver(BVPSolverBase):
         # No need to waste processor power on multiple bvps, only do it on one
         if self.rank == 0:
             avg_change = 1e10
-            vel_adjust_factor = 1            
+            vel_adjust_factor = 1
+            first=True
             while avg_change > 1e-9:
                 atmosphere = self.atmosphere_class(dimensions=1, comm=MPI.COMM_SELF, **atmosphere_kwargs)
                 atmosphere.problem = de.NLBVP(atmosphere.domain, variables=['T1', 'T1_z','p1'], ncc_cutoff=tolerance)
@@ -501,8 +499,8 @@ class BoussinesqBVPSolver(BVPSolverBase):
                     logger.info('Perturbation norm: {}'.format(np.sum(np.abs(pert))))
 
                 vel_adjust_factor, avg_change =\
-                        self._update_profiles_dict(solver, atmosphere, vel_adjust_factor)
-
+                        self._update_profiles_dict(solver, atmosphere, vel_adjust_factor, first=first)
+                first=False
 
                 T1 = solver.state['T1']
                 T1_z = solver.state['T1_z']
@@ -522,7 +520,7 @@ class BoussinesqBVPSolver(BVPSolverBase):
         else:
             for v in self.VARS.keys():
                 return_dict[v] *= 0
-        print(return_dict)
+        logger.info(return_dict)
             
         self.comm.Barrier()
         # Communicate output profiles from proc 0 to all others.
