@@ -332,6 +332,7 @@ class BoussinesqBVPSolver(BVPSolverBase):
     FIELDS = OrderedDict([  
                 ('enth_flux_IVP',       ('w*(T0+T1)', 0)),                      
                 ('T_z_IVP',             ('(T0_z+T1_z)', 0)),                      
+                ('T_IVP',               ('(T0+T1)', 0)),                      
                 ('T_forcing',           ('dz(w*(T0+T1) - P *(T0_z+T1_z))', 0)),                      
 #                ('extra_T_forcing',     ('dx(u*(T1) - P *dx(T1))', 0)),                      
 #                ('w_IVP',               ('w', 0)),                      
@@ -387,6 +388,22 @@ class BoussinesqBVPSolver(BVPSolverBase):
         for key in atmosphere.dirichlet_set:
             atmosphere.problem.meta[key]['z']['dirichlet'] = True
 
+    def _find_BL_zs(self, z, T):
+        
+        num_pts_mid = int(len(z)/10)
+        mid         = int(len(z)/2)
+        xs = z[mid-num_pts_mid:mid+num_pts_mid]
+        ys = T[mid-num_pts_mid:mid+num_pts_mid]
+        p = np.polyfit(xs, ys, 1)
+        line = p[0]*z + p[1]
+
+        goodness_fit_bot = np.abs((T[:mid] - line[:mid]) / T[:mid])
+        goodness_fit_top = np.abs((T[mid:] - line[mid:]) / T[mid:])
+        z_bot = z[:mid][goodness_fit_bot < 0.1][-1]
+        z_top = z[mid:][goodness_fit_top < 0.1][0]
+
+        return z_bot, z_top
+
     def _update_profiles_dict(self, solver, atmosphere, vel_adjust_factor, first=False):
         #Get solver states
         T1 = solver.state['T1']
@@ -395,8 +412,8 @@ class BoussinesqBVPSolver(BVPSolverBase):
 
 
         # Update temperature fields for next solve. May need to add some logic here if nx == nz.
-#        T1.set_scales(self.nz/atmosphere.nz, keep_data=True)
-#        self.profiles_dict['T1_IVP_full'] += T1['g']
+        T1.set_scales(self.nz/atmosphere.nz, keep_data=True)
+        self.profiles_dict['T_IVP'] += T1['g']
         T1_z.set_scales(self.nz/atmosphere.nz, keep_data=True)
         self.profiles_dict['T_z_IVP'] += T1_z['g']
 
@@ -405,6 +422,8 @@ class BoussinesqBVPSolver(BVPSolverBase):
         z['g'] = atmosphere.z
         z.set_scales(self.nz/atmosphere.nz, keep_data=True)
         z = z['g']
+
+        z_bot, z_top = self._find_BL_zs(z, self.profiles_dict['T_IVP'])
 #        plt.plot(z, -atmosphere.P*self.profiles_dict['T_z_IVP']+self.profiles_dict['enth_flux_IVP'])
 #        plt.plot(z, -atmosphere.P*self.profiles_dict['T_z_IVP'])
 #        plt.plot(z, self.profiles_dict['enth_flux_IVP'])
@@ -438,7 +457,8 @@ class BoussinesqBVPSolver(BVPSolverBase):
 #        w_prof = self.profiles_dict['w_rms_IVP']
         mid = int(self.nz/2)
         self.profiles_dict['enth_flux_IVP']  *= np.mean(tot_flux) / self.profiles_dict['enth_flux_IVP'][mid]
-        self.profiles_dict['enth_flux_IVP'][self.profiles_dict['enth_flux_IVP'] > np.mean(tot_flux)] = np.mean(tot_flux)
+        self.profiles_dict['enth_flux_IVP'][(z>z_bot)*(z<z_top)] = np.mean(tot_flux)
+#        self.profiles_dict['enth_flux_IVP'][self.profiles_dict['enth_flux_IVP'] > np.mean(tot_flux)] = np.mean(tot_flux)
 #        self.profiles_dict['enth_flux_IVP']  = np.mean(enth_flux, axis=0)
 #        self.profiles_dict['enth_flux_IVP']  *= np.mean(tot_flux) / self.profiles_dict['enth_flux_IVP'].max()
 #        self.profiles_dict['enth_flux_IVP']  = np.mean(tot_flux) * w_prof / w_prof.max() #vel_adjust
