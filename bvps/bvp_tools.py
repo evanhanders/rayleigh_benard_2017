@@ -72,7 +72,7 @@ class BVPSolverBase:
     VEL_VARS   = None
 
     def __init__(self, nx, nz, flow, comm, solver, num_bvps, bvp_equil_time, bvp_transient_time=20,
-                 bvp_run_threshold=1e-2, bvp_l2_check_time=1, min_bvp_time=20):
+                 bvp_run_threshold=1e-2, bvp_l2_check_time=1, min_bvp_time=0):
         """
         Initializes the object; grabs solver states and makes room for profile averages
         
@@ -313,7 +313,7 @@ class BVPSolverBase:
 #                plt.pcolormesh(xx, yy, self.profiles_dict[fd], cmap='RdBu_r')
 #                plt.savefig('{}.png'.format(fd))
 #                plt.close()
-#
+
         # Restart counters for next BVP
         self.avg_time_elapsed   = 0.
         self.avg_time_start     = self.solver.sim_time
@@ -337,10 +337,11 @@ class BoussinesqBVPSolver(BVPSolverBase):
 #                ('w_IVP',               ('w', 0)),                      
                 ('T1_IVP',              ('T1', 0)),                      
                 ('T1_z_IVP',            ('T1_z', 0)),                    
-#                ('T1_IVP_full',         ('T1', 1)),                      
+                ('w_rms_IVP',           ('sqrt(w**2)', 0)),                    
+                ('T1_IVP_full',         ('T1', 1)),                      
 #                ('T1_z_IVP_full',       ('T1_z', 1)),                    
 #                ('T1_zz_IVP_full',      ('dz(T1_z)', 1)),                    
-#                ('w_IVP_full',          ('w', 1)),                    
+                ('w_IVP_full',          ('w', 1)),                    
 #                ('wz_IVP_full',          ('wz', 1)),                    
 #                ('u_IVP_full',          ('u', 1)),                    
                 ('p_IVP',               ('p', 0)), 
@@ -394,33 +395,50 @@ class BoussinesqBVPSolver(BVPSolverBase):
 
 
         # Update temperature fields for next solve. May need to add some logic here if nx == nz.
+        T1.set_scales(self.nz/atmosphere.nz, keep_data=True)
+        self.profiles_dict['T1_IVP_full'] += T1['g']
         T1_z.set_scales(self.nz/atmosphere.nz, keep_data=True)
         self.profiles_dict['T_z_IVP'] += T1_z['g']
 
-#        plt.plot(-atmosphere.P*self.profiles_dict['T_z_IVP']+self.profiles_dict['enth_flux_IVP'])
-#        plt.plot(-atmosphere.P*self.profiles_dict['T_z_IVP'])
-#        plt.plot(self.profiles_dict['enth_flux_IVP'])
+
+        z = atmosphere._new_field()
+        z['g'] = atmosphere.z
+        z.set_scales(self.nz/atmosphere.nz, keep_data=True)
+        z = z['g']
+#        plt.plot(z, -atmosphere.P*self.profiles_dict['T_z_IVP']+self.profiles_dict['enth_flux_IVP'])
+#        plt.plot(z, -atmosphere.P*self.profiles_dict['T_z_IVP'])
+#        plt.plot(z, self.profiles_dict['enth_flux_IVP'])
 #        plt.savefig('fluxes_{:04d}.png'.format(self.plot_count))
 #        plt.close()
+#        for fd in self.FIELDS.keys():
+#            if self.FIELDS[fd][1] == 0:
+#                plt.plot(z, self.profiles_dict[fd])
+#                plt.savefig('{}_{:04d}.png'.format(fd, self.plot_count))
+#                plt.close()
+#
 #        self.plot_count += 1
 
 
 
         # Calculate enth flux and update velocity fields.
-        atmosphere.T0.set_scales(self.nz/atmosphere.nz, keep_data=True)
+#        atmosphere.T0.set_scales(self.nz/atmosphere.nz, keep_data=True)
+#        min_kap_flux        = np.min(kappa_flux)
+#        if min_kap_flux < 0:# and first:
+#            new_enth_flux       = min_kap_flux
+#            argmin_kap_flux     = np.argmin(kappa_flux)
+#            enth_flux_factor    = 1 + new_enth_flux/self.profiles_dict['enth_flux_IVP'][argmin_kap_flux]
+#            vel_adjust          = 1 #enth_flux_factor
+#            print(new_enth_flux, enth_flux_factor)
+#        else:
+#            vel_adjust          = 1
+#        vel_adjust_factor   *= vel_adjust
+#        enth_flux = self.profiles_dict['T1_IVP_full']*self.profiles_dict['w_IVP_full']
         kappa_flux          = -atmosphere.P * self.profiles_dict['T_z_IVP']
         tot_flux            = kappa_flux + self.profiles_dict['enth_flux_IVP']
-        min_kap_flux        = np.min(kappa_flux)
-        if min_kap_flux < 0:# and first:
-            new_enth_flux       = min_kap_flux
-            argmin_kap_flux     = np.argmin(kappa_flux)
-            enth_flux_factor    = 1 + new_enth_flux/self.profiles_dict['enth_flux_IVP'][argmin_kap_flux]
-            vel_adjust          = enth_flux_factor
-            print(new_enth_flux, enth_flux_factor)
-        else:
-            vel_adjust          = 1
-        vel_adjust_factor   *= vel_adjust
-        self.profiles_dict['enth_flux_IVP']  *= vel_adjust
+        w_prof = self.profiles_dict['w_rms_IVP']
+#        self.profiles_dict['enth_flux_IVP']  = np.mean(enth_flux, axis=0)
+        self.profiles_dict['enth_flux_IVP']  *= np.mean(tot_flux) / self.profiles_dict['enth_flux_IVP'].max()
+#        self.profiles_dict['enth_flux_IVP']  = np.mean(tot_flux) * w_prof / w_prof.max() #vel_adjust
 
         f = atmosphere._new_field()
         df = atmosphere._new_field()
@@ -436,7 +454,7 @@ class BoussinesqBVPSolver(BVPSolverBase):
         #Report
         avg_change = np.mean(T1['g'])
         logger.info('avg change T1: {}'.format(avg_change))
-        logger.info('vel_adj factor: {}'.format(vel_adjust))
+#        logger.info('vel_adj factor: {}'.format(vel_adjust))
 
         return vel_adjust_factor, np.mean(np.abs(T1['g']))
 
