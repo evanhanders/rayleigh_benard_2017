@@ -337,11 +337,11 @@ class BoussinesqBVPSolver(BVPSolverBase):
 #                ('w_IVP',               ('w', 0)),                      
                 ('T1_IVP',              ('T1', 0)),                      
                 ('T1_z_IVP',            ('T1_z', 0)),                    
-                ('w_rms_IVP',           ('sqrt(w**2)', 0)),                    
-                ('T1_IVP_full',         ('T1', 1)),                      
+#                ('w_rms_IVP',           ('sqrt(w**2)', 0)),                    
+#                ('T1_IVP_full',         ('T1', 1)),                      
 #                ('T1_z_IVP_full',       ('T1_z', 1)),                    
 #                ('T1_zz_IVP_full',      ('dz(T1_z)', 1)),                    
-                ('w_IVP_full',          ('w', 1)),                    
+#                ('w_IVP_full',          ('w', 1)),                    
 #                ('wz_IVP_full',          ('wz', 1)),                    
 #                ('u_IVP_full',          ('u', 1)),                    
                 ('p_IVP',               ('p', 0)), 
@@ -395,8 +395,8 @@ class BoussinesqBVPSolver(BVPSolverBase):
 
 
         # Update temperature fields for next solve. May need to add some logic here if nx == nz.
-        T1.set_scales(self.nz/atmosphere.nz, keep_data=True)
-        self.profiles_dict['T1_IVP_full'] += T1['g']
+#        T1.set_scales(self.nz/atmosphere.nz, keep_data=True)
+#        self.profiles_dict['T1_IVP_full'] += T1['g']
         T1_z.set_scales(self.nz/atmosphere.nz, keep_data=True)
         self.profiles_dict['T_z_IVP'] += T1_z['g']
 
@@ -435,7 +435,7 @@ class BoussinesqBVPSolver(BVPSolverBase):
 #        enth_flux = self.profiles_dict['T1_IVP_full']*self.profiles_dict['w_IVP_full']
         kappa_flux          = -atmosphere.P * self.profiles_dict['T_z_IVP']
         tot_flux            = kappa_flux + self.profiles_dict['enth_flux_IVP']
-        w_prof = self.profiles_dict['w_rms_IVP']
+#        w_prof = self.profiles_dict['w_rms_IVP']
 #        self.profiles_dict['enth_flux_IVP']  = np.mean(enth_flux, axis=0)
         self.profiles_dict['enth_flux_IVP']  *= np.mean(tot_flux) / self.profiles_dict['enth_flux_IVP'].max()
 #        self.profiles_dict['enth_flux_IVP']  = np.mean(tot_flux) * w_prof / w_prof.max() #vel_adjust
