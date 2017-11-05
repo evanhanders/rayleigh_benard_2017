@@ -392,15 +392,35 @@ class BoussinesqBVPSolver(BVPSolverBase):
         
         num_pts_mid = int(len(z)/10)
         mid         = int(len(z)/2)
-        xs = z[mid-num_pts_mid:mid+num_pts_mid]
-        ys = T[mid-num_pts_mid:mid+num_pts_mid]
-        p = np.polyfit(xs, ys, 1)
-        line = p[0]*z + p[1]
 
-        goodness_fit_bot = np.abs((T[:mid] - line[:mid]) / T[:mid])
-        goodness_fit_top = np.abs((T[mid:] - line[mid:]) / T[mid:])
-        z_bot = z[:mid][goodness_fit_bot < 0.1][-1]
-        z_top = z[mid:][goodness_fit_top < 0.1][0]
+        bl          = int(len(z)/10)
+        try:
+            xs = z[mid-num_pts_mid:mid+num_pts_mid]
+            ys = T[mid-num_pts_mid:mid+num_pts_mid]
+            p = np.polyfit(xs, ys, 1)
+            line = p[0]*z + p[1]
+
+            xs_bl_bot = z[:bl]
+            ys_bl_bot = T[:bl]
+            p_bot = np.polyfit(xs_bl_bot, ys_bl_bot, 1)
+
+            xs_bl_top = z[-bl:]
+            ys_bl_top = T[-bl:]
+            p_top = np.polyfit(xs_bl_top, ys_bl_top, 1)
+
+            z_top = (p[1] - p_top[1])/(p_top[0] - p[0])
+            z_bot = (p[1] - p_bot[1])/(p_bot[0] - p[0])
+            print(z_top, z_bot)
+            if z_top > z[-1] or z_bot < z[0]:
+                raise
+
+#            goodness_fit_bot = np.abs((T[:mid] - line[:mid]) / line[:mid])
+#            goodness_fit_top = np.abs((T[mid:] - line[mid:]) / line[mid:])
+#            print(goodness_fit_bot, goodness_fit_top)
+#            z_bot = z[:mid][goodness_fit_bot > 0.2][-1]
+#            z_top = z[mid:][goodness_fit_top > 0.2][0]
+        except:
+            z_bot, z_top = z[mid], z[mid]
 
         return z_bot, z_top
 
@@ -423,19 +443,21 @@ class BoussinesqBVPSolver(BVPSolverBase):
         z.set_scales(self.nz/atmosphere.nz, keep_data=True)
         z = z['g']
 
-        z_bot, z_top = self._find_BL_zs(z, self.profiles_dict['T_IVP'])
-#        plt.plot(z, -atmosphere.P*self.profiles_dict['T_z_IVP']+self.profiles_dict['enth_flux_IVP'])
-#        plt.plot(z, -atmosphere.P*self.profiles_dict['T_z_IVP'])
-#        plt.plot(z, self.profiles_dict['enth_flux_IVP'])
-#        plt.savefig('fluxes_{:04d}.png'.format(self.plot_count))
-#        plt.close()
-#        for fd in self.FIELDS.keys():
-#            if self.FIELDS[fd][1] == 0:
-#                plt.plot(z, self.profiles_dict[fd])
-#                plt.savefig('{}_{:04d}.png'.format(fd, self.plot_count))
-#                plt.close()
-#
-#        self.plot_count += 1
+#        z_bot, z_top = self._find_BL_zs(z, self.profiles_dict['T_IVP'])
+        plt.plot(z, -atmosphere.P*self.profiles_dict['T_z_IVP']+self.profiles_dict['enth_flux_IVP'])
+        plt.plot(z, -atmosphere.P*self.profiles_dict['T_z_IVP'])
+        plt.plot(z, self.profiles_dict['enth_flux_IVP'])
+#        plt.axvline(z_bot)
+#        plt.axvline(z_top)
+        plt.savefig('fluxes_{:04d}.png'.format(self.plot_count))
+        plt.close()
+        for fd in self.FIELDS.keys():
+            if self.FIELDS[fd][1] == 0:
+                plt.plot(z, self.profiles_dict[fd])
+                plt.savefig('{}_{:04d}.png'.format(fd, self.plot_count))
+                plt.close()
+
+        self.plot_count += 1
 
 
 
@@ -456,8 +478,19 @@ class BoussinesqBVPSolver(BVPSolverBase):
         tot_flux            = kappa_flux + self.profiles_dict['enth_flux_IVP']
 #        w_prof = self.profiles_dict['w_rms_IVP']
         mid = int(self.nz/2)
-        self.profiles_dict['enth_flux_IVP']  *= np.mean(tot_flux) / self.profiles_dict['enth_flux_IVP'][mid]
-        self.profiles_dict['enth_flux_IVP'][(z>z_bot)*(z<z_top)] = np.mean(tot_flux)
+        num_pts_mid = int(self.nz/10)
+        xs = z[mid-num_pts_mid:mid+num_pts_mid]
+        ys = self.profiles_dict['enth_flux_IVP'][mid-num_pts_mid:mid+num_pts_mid]
+        p = np.polyfit(xs, ys, 1)
+        line = p[0]*z + p[1]
+        print(line, self.profiles_dict['enth_flux_IVP'], self.profiles_dict['enth_flux_IVP']/line)
+        self.profiles_dict['enth_flux_IVP']  *= np.mean(tot_flux) / line
+#        self.profiles_dict['enth_flux_IVP']  *= np.mean(tot_flux) / self.profiles_dict['enth_flux_IVP'][mid]
+#`        self.profiles_dict['enth_flux_IVP'][(z>z_bot)*(z<z_top)] = np.mean(tot_flux)
+#`        lower=self.profiles_dict['enth_flux_IVP'][z <= z_bot]
+#`        self.profiles_dict['enth_flux_IVP'][z <= z_bot] *= np.mean(tot_flux) / lower[-1]
+#`        upper=self.profiles_dict['enth_flux_IVP'][z >= z_top]
+#`        self.profiles_dict['enth_flux_IVP'][z >= z_top] *= np.mean(tot_flux) / upper[0]
 #        self.profiles_dict['enth_flux_IVP'][self.profiles_dict['enth_flux_IVP'] > np.mean(tot_flux)] = np.mean(tot_flux)
 #        self.profiles_dict['enth_flux_IVP']  = np.mean(enth_flux, axis=0)
 #        self.profiles_dict['enth_flux_IVP']  *= np.mean(tot_flux) / self.profiles_dict['enth_flux_IVP'].max()
