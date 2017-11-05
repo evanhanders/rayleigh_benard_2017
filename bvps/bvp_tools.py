@@ -52,11 +52,13 @@ class BVPSolverBase:
         flow                - A dedalus flow_tools.GlobalFlowProperty object for the IVP solver which is tracking
                                 the Reynolds number, and will track FIELDS variables
         min_bvp_time        - Minimum simulation time to wait between BVPs.
+        min_avg_dt          - Minimum simulation time to wait between adjusting average profiles.
         n_per_proc          - Number of z-points per core (for parallelization)
         num_bvps            - Total (max) number of BVPs to complete
         nx                  - x-resolution of the IVP grid
         nz                  - z-resolution of the IVP grid
         partial_prof_dict   - a dictionary containing local contributions to the averages of FIELDS
+        plot_dir            - A directory to save plots into during BVPs.
         profiles_dict       - a dictionary containing the time/horizontal average of FIELDS
         profiles_dict_last  - a dictionary containing the time/horizontal average of FIELDS from the previous bvp
         profiles_dict_curr  - a dictionary containing the time/horizontal average of FIELDS for current atmosphere state
@@ -72,7 +74,8 @@ class BVPSolverBase:
     VEL_VARS   = None
 
     def __init__(self, nx, nz, flow, comm, solver, num_bvps, bvp_equil_time, bvp_transient_time=20,
-                 bvp_run_threshold=1e-2, bvp_l2_check_time=1, min_bvp_time=0):
+                 bvp_run_threshold=1e-2, bvp_l2_check_time=1, min_bvp_time=0, plot_dir=None,
+                 min_avg_dt=0.05):
         """
         Initializes the object; grabs solver states and makes room for profile averages
         
@@ -82,13 +85,16 @@ class BVPSolverBase:
         flow                - a dedalus.extras.flow_tools.GlobalFlowProperty for the IVP solver
         comm                - An MPI comm object for the IVP solver
         solver              - The IVP solver
+        min_bvp_time        - Minimum sim time to do average over before doing a bvp
+        min_avg_dt          - Minimum sim time to wait between adjusting averages
         num_bvps            - Maximum number of BVPs to solve
         bvp_equil_time      - Sim time to wait after a bvp before beginning averages for the next one
         bvp_transient_time  - Sim time to wait at beginning of simulation before starting average
         bvp_run_threshold   - Level of convergence that must be reached in statistical averages
                                 before doing a BVP (1e-2 = 1% variation OK, 1e-3 = 0.1%, so on)
         bvp_l2_check_time   - Sim time to wait between communications to see if we're converged
-                                (so that we don't "check for convergence" on all processes at every timestep):w
+                                (so that we don't "check for convergence" on all processes at every timestep)
+        plot_dir            - If not None, save plots to this directory during bvps.
         """
         #Get info about IVP
         self.flow       = flow
@@ -99,6 +105,8 @@ class BVPSolverBase:
         #Specify how BVPs work
         self.num_bvps           = num_bvps
         self.min_bvp_time       = min_bvp_time
+        self.min_avg_dt         = min_avg_dt
+        self.curr_avg_dt        = 0.
         self.completed_bvps     = 0
         self.avg_time_elapsed   = 0.
         self.avg_time_start     = 0.
@@ -161,6 +169,14 @@ class BVPSolverBase:
             self.solver_states[st] = self.solver.state[var]
         for st, var in self.VEL_VARS.items():
             self.vel_solver_states[st] = self.solver.state[var]
+
+
+        self.plot_dir = plot_dir
+        if not isinstance(self.plot_dir, type(None)):
+            import os
+            if self.rank == 0 and not os.path.exists('{:s}'.format(self.plot_dir)):
+                os.mkdir('{:s}'.format(self.plot_dir))
+
 
     def update_local_profiles(self, dt, prof_name, avg_type=0):
         """
@@ -236,35 +252,37 @@ class BVPSolverBase:
 
             #Update sums for averages. Check to see if we're converged enough for a BVP.
             self.avg_time_elapsed += dt
+            self.curr_avg_dt      += dt
             ready_for_bvp = True
-            for fd, info in self.FIELDS.items():
-                field, avg_type = self.FIELDS[fd]
-                self.update_local_profiles(dt, fd, avg_type=avg_type)
-                avg = self.partial_prof_dict[fd]/self.avg_time_elapsed
-                if self.first_l2:
-                    self.current_local_l2[fd]  = 0
-                    self.current_local_avg[fd] = avg
-                    ready_for_bvp = False
-                    continue
-                else:
-                    bad_places = np.where(np.abs(self.current_local_avg[fd]) < 1e-7)
-                    self.current_local_l2[fd] = np.mean(np.abs((self.current_local_avg[fd] - avg)/self.current_local_avg[fd]))
-                    self.current_local_avg[fd] = avg
-#                    print(fd, self.current_local_l2[fd], avg)
-                if self.current_local_l2[fd] >= self.bvp_run_threshold:
-                    ready_for_bvp = False
-            self.first_l2 = False
+            if self.curr_avg_dt >= self.min_avg_dt:
+#                print('averaging with dt {}', self.curr_avg_dt)
+                for fd, info in self.FIELDS.items():
+                    field, avg_type = self.FIELDS[fd]
+                    self.update_local_profiles(self.curr_avg_dt, fd, avg_type=avg_type)
+                    avg = self.partial_prof_dict[fd]/self.avg_time_elapsed
+                    if self.first_l2:
+                        self.current_local_l2[fd]  = 0
+                        self.current_local_avg[fd] = avg
+                        ready_for_bvp = False
+                        continue
+                    else:
+                        self.current_local_l2[fd] = np.mean(np.abs((self.current_local_avg[fd] - avg)/self.current_local_avg[fd]))
+                        self.current_local_avg[fd] = avg
+                    if self.current_local_l2[fd] >= self.bvp_run_threshold:
+                        ready_for_bvp = False
+                self.first_l2 = False
 
-            if (self.solver.sim_time - self.bvp_l2_last_check_time) > self.bvp_l2_check_time:
-                local, globl = np.zeros(1), np.zeros(1)
-                local[0] = int(ready_for_bvp)
-                self.comm.Allreduce(local, globl, op=MPI.SUM)
-                logger.info('{}/{} processors converged for L2'.format(globl[0], self.size))
-                if globl[0] == self.size:
-                    self.do_bvp = True
-                else:
-                    self.do_bvp = False
-                self.bvp_l2_last_check_time = self.solver.sim_time
+                if (self.solver.sim_time - self.bvp_l2_last_check_time) > self.bvp_l2_check_time:
+                    local, globl = np.zeros(1), np.zeros(1)
+                    local[0] = int(ready_for_bvp)
+                    self.comm.Allreduce(local, globl, op=MPI.SUM)
+                    logger.info('{}/{} processors converged for BVP solve'.format(globl[0], self.size))
+                    if globl[0] == self.size:
+                        self.do_bvp = True
+                    else:
+                        self.do_bvp = False
+                    self.bvp_l2_last_check_time = self.solver.sim_time
+                self.curr_avg_dt = 0.
 
 
     def check_if_solve(self):
@@ -304,16 +322,6 @@ class BVPSolverBase:
                 self.profiles_dict[fd] = curr_profile/self.avg_time_elapsed
                 self.profiles_dict_curr[fd] = 1*self.profiles_dict[fd]
 
-#            if item[1] == 0:
-#                plt.plot(self.solver.domain.grid(-1)[0], self.profiles_dict[fd])
-#                plt.savefig('{}.png'.format(fd))
-#                plt.close()
-#            else:
-#                xx, yy = np.meshgrid(self.solver.domain.grid(0), self.solver.domain.grid(1)[0], indexing='ij')
-#                plt.pcolormesh(xx, yy, self.profiles_dict[fd], cmap='RdBu_r')
-#                plt.savefig('{}.png'.format(fd))
-#                plt.close()
-
         # Restart counters for next BVP
         self.avg_time_elapsed   = 0.
         self.avg_time_start     = self.solver.sim_time
@@ -332,25 +340,10 @@ class BoussinesqBVPSolver(BVPSolverBase):
     FIELDS = OrderedDict([  
                 ('enth_flux_IVP',       ('w*(T0+T1)', 0)),                      
                 ('T_z_IVP',             ('(T0_z+T1_z)', 0)),                      
-                ('T_IVP',               ('(T0+T1)', 0)),                      
                 ('T_forcing',           ('dz(w*(T0+T1) - P *(T0_z+T1_z))', 0)),                      
-#                ('extra_T_forcing',     ('dx(u*(T1) - P *dx(T1))', 0)),                      
-#                ('w_IVP',               ('w', 0)),                      
                 ('T1_IVP',              ('T1', 0)),                      
                 ('T1_z_IVP',            ('T1_z', 0)),                    
-#                ('w_rms_IVP',           ('sqrt(w**2)', 0)),                    
-#                ('T1_IVP_full',         ('T1', 1)),                      
-#                ('T1_z_IVP_full',       ('T1_z', 1)),                    
-#                ('T1_zz_IVP_full',      ('dz(T1_z)', 1)),                    
-#                ('w_IVP_full',          ('w', 1)),                    
-#                ('wz_IVP_full',          ('wz', 1)),                    
-#                ('u_IVP_full',          ('u', 1)),                    
                 ('p_IVP',               ('p', 0)), 
-#                ('T_forcing',           ('(UdotGrad((T0+T1), (T0_z+T1_z)) - dz(P * T1_z))', 0)),
-#                ('T_forcing',           ('dz(w*(T1) - P * T1_z)', 0)),
-#                ('Lap_w',               ('Lap(w, wz)', 0)),
-#                ('UdotGrad_w',          ('UdotGrad(w, wz)', 0)),
-#                ('w_forcing',           ('(-UdotGrad(w, wz) - dz(p) + T1 + R*Lap(w, wz))', 0)),
                         ])
     VARS   = OrderedDict([  
                 ('T1_IVP',              'T1'),
@@ -388,42 +381,6 @@ class BoussinesqBVPSolver(BVPSolverBase):
         for key in atmosphere.dirichlet_set:
             atmosphere.problem.meta[key]['z']['dirichlet'] = True
 
-    def _find_BL_zs(self, z, T):
-        
-        num_pts_mid = int(len(z)/10)
-        mid         = int(len(z)/2)
-
-        bl          = int(len(z)/10)
-        try:
-            xs = z[mid-num_pts_mid:mid+num_pts_mid]
-            ys = T[mid-num_pts_mid:mid+num_pts_mid]
-            p = np.polyfit(xs, ys, 1)
-            line = p[0]*z + p[1]
-
-            xs_bl_bot = z[:bl]
-            ys_bl_bot = T[:bl]
-            p_bot = np.polyfit(xs_bl_bot, ys_bl_bot, 1)
-
-            xs_bl_top = z[-bl:]
-            ys_bl_top = T[-bl:]
-            p_top = np.polyfit(xs_bl_top, ys_bl_top, 1)
-
-            z_top = (p[1] - p_top[1])/(p_top[0] - p[0])
-            z_bot = (p[1] - p_bot[1])/(p_bot[0] - p[0])
-            print(z_top, z_bot)
-            if z_top > z[-1] or z_bot < z[0]:
-                raise
-
-#            goodness_fit_bot = np.abs((T[:mid] - line[:mid]) / line[:mid])
-#            goodness_fit_top = np.abs((T[mid:] - line[mid:]) / line[mid:])
-#            print(goodness_fit_bot, goodness_fit_top)
-#            z_bot = z[:mid][goodness_fit_bot > 0.2][-1]
-#            z_top = z[mid:][goodness_fit_top > 0.2][0]
-        except:
-            z_bot, z_top = z[mid], z[mid]
-
-        return z_bot, z_top
-
     def _update_profiles_dict(self, solver, atmosphere, vel_adjust_factor, first=False):
         #Get solver states
         T1 = solver.state['T1']
@@ -432,8 +389,6 @@ class BoussinesqBVPSolver(BVPSolverBase):
 
 
         # Update temperature fields for next solve. May need to add some logic here if nx == nz.
-        T1.set_scales(self.nz/atmosphere.nz, keep_data=True)
-        self.profiles_dict['T_IVP'] += T1['g']
         T1_z.set_scales(self.nz/atmosphere.nz, keep_data=True)
         self.profiles_dict['T_z_IVP'] += T1_z['g']
 
@@ -443,59 +398,37 @@ class BoussinesqBVPSolver(BVPSolverBase):
         z.set_scales(self.nz/atmosphere.nz, keep_data=True)
         z = z['g']
 
-#        z_bot, z_top = self._find_BL_zs(z, self.profiles_dict['T_IVP'])
-        plt.plot(z, -atmosphere.P*self.profiles_dict['T_z_IVP']+self.profiles_dict['enth_flux_IVP'])
-        plt.plot(z, -atmosphere.P*self.profiles_dict['T_z_IVP'])
-        plt.plot(z, self.profiles_dict['enth_flux_IVP'])
-#        plt.axvline(z_bot)
-#        plt.axvline(z_top)
-        plt.savefig('fluxes_{:04d}.png'.format(self.plot_count))
-        plt.close()
-        for fd in self.FIELDS.keys():
-            if self.FIELDS[fd][1] == 0:
-                plt.plot(z, self.profiles_dict[fd])
-                plt.savefig('{}_{:04d}.png'.format(fd, self.plot_count))
-                plt.close()
+        if not isinstance(self.plot_dir, type(None)):
+            plt.plot(z, -atmosphere.P*self.profiles_dict['T_z_IVP']+self.profiles_dict['enth_flux_IVP'])
+            plt.plot(z, -atmosphere.P*self.profiles_dict['T_z_IVP'])
+            plt.plot(z, self.profiles_dict['enth_flux_IVP'])
+            plt.savefig('{}/fluxes_{:04d}.png'.format(self.plot_dir, self.plot_count))
+            plt.close()
+            for fd in self.FIELDS.keys():
+                if self.FIELDS[fd][1] == 0:
+                    plt.plot(z, self.profiles_dict[fd])
+                    plt.savefig('{}/{}_{:04d}.png'.format(self.plot_dir, fd, self.plot_count))
+                    plt.close()
 
         self.plot_count += 1
 
 
-
-        # Calculate enth flux and update velocity fields.
-#        atmosphere.T0.set_scales(self.nz/atmosphere.nz, keep_data=True)
-#        min_kap_flux        = np.min(kappa_flux)
-#        if min_kap_flux < 0:# and first:
-#            new_enth_flux       = min_kap_flux
-#            argmin_kap_flux     = np.argmin(kappa_flux)
-#            enth_flux_factor    = 1 + new_enth_flux/self.profiles_dict['enth_flux_IVP'][argmin_kap_flux]
-#            vel_adjust          = 1 #enth_flux_factor
-#            print(new_enth_flux, enth_flux_factor)
-#        else:
-#            vel_adjust          = 1
-#        vel_adjust_factor   *= vel_adjust
-#        enth_flux = self.profiles_dict['T1_IVP_full']*self.profiles_dict['w_IVP_full']
+        # Adjust the enthalpy flux so that it on average carries all atmospheric flux in the bulk.
         kappa_flux          = -atmosphere.P * self.profiles_dict['T_z_IVP']
         tot_flux            = kappa_flux + self.profiles_dict['enth_flux_IVP']
-#        w_prof = self.profiles_dict['w_rms_IVP']
         mid = int(self.nz/2)
         num_pts_mid = int(self.nz/10)
         xs = z[mid-num_pts_mid:mid+num_pts_mid]
         ys = self.profiles_dict['enth_flux_IVP'][mid-num_pts_mid:mid+num_pts_mid]
         p = np.polyfit(xs, ys, 1)
         line = p[0]*z + p[1]
-        print(line, self.profiles_dict['enth_flux_IVP'], self.profiles_dict['enth_flux_IVP']/line)
-        self.profiles_dict['enth_flux_IVP']  *= np.mean(tot_flux) / line
-#        self.profiles_dict['enth_flux_IVP']  *= np.mean(tot_flux) / self.profiles_dict['enth_flux_IVP'][mid]
-#`        self.profiles_dict['enth_flux_IVP'][(z>z_bot)*(z<z_top)] = np.mean(tot_flux)
-#`        lower=self.profiles_dict['enth_flux_IVP'][z <= z_bot]
-#`        self.profiles_dict['enth_flux_IVP'][z <= z_bot] *= np.mean(tot_flux) / lower[-1]
-#`        upper=self.profiles_dict['enth_flux_IVP'][z >= z_top]
-#`        self.profiles_dict['enth_flux_IVP'][z >= z_top] *= np.mean(tot_flux) / upper[0]
-#        self.profiles_dict['enth_flux_IVP'][self.profiles_dict['enth_flux_IVP'] > np.mean(tot_flux)] = np.mean(tot_flux)
-#        self.profiles_dict['enth_flux_IVP']  = np.mean(enth_flux, axis=0)
-#        self.profiles_dict['enth_flux_IVP']  *= np.mean(tot_flux) / self.profiles_dict['enth_flux_IVP'].max()
-#        self.profiles_dict['enth_flux_IVP']  = np.mean(tot_flux) * w_prof / w_prof.max() #vel_adjust
+        self.profiles_dict['enth_flux_IVP']  *= tot_flux / line
+        
+        #In the simulation, adjust the velocity field by a constant value according to the mean drop in enth flux.
+        vel_adjust = np.mean(tot_flux / line)
+        vel_adjust_factor *= vel_adjust
 
+        #Adjust temperature forcing for the next bvp solve.
         f = atmosphere._new_field()
         df = atmosphere._new_field()
         f.set_scales(self.nz/atmosphere.nz, keep_data=False)
@@ -504,13 +437,10 @@ class BoussinesqBVPSolver(BVPSolverBase):
         df.set_scales(self.nz/atmosphere.nz, keep_data=True)
         self.profiles_dict['T_forcing'] = df['g']
         
-#        self.profiles_dict['w_forcing'] *= 0
-#        self.profiles_dict['extra_T_forcing'] *= 0 
-
         #Report
         avg_change = np.mean(T1['g'])
         logger.info('avg change T1: {}'.format(avg_change))
-#        logger.info('vel_adj factor: {}'.format(vel_adjust))
+        logger.info('vel_adj factor: {}'.format(vel_adjust))
 
         return vel_adjust_factor, np.mean(np.abs(T1['g']))
 
@@ -531,7 +461,6 @@ class BoussinesqBVPSolver(BVPSolverBase):
         return_dict = OrderedDict()
         for v in self.VARS.keys():
             return_dict[v] = np.zeros(self.nz, dtype=np.float64)
-#                return_dict[v] -= self.get_full_profile(v)
 
 
         # No need to waste processor power on multiple bvps, only do it on one
@@ -618,8 +547,10 @@ class BoussinesqBVPSolver(BVPSolverBase):
 
         # Actually update IVP states
         for v in self.VARS.keys():
+            #Subtract out current avg
             self.solver_states[v].set_scales(1, keep_data=True)
             self.solver_states[v]['g'] -= self.solver_states[v]['g'].mean(axis=0)
+            #Put in right avg
             self.solver_states[v].set_scales(1, keep_data=True)
             self.solver_states[v]['g'] += return_dict[v][self.n_per_proc*self.rank:self.n_per_proc*(self.rank+1)]
         for v in self.VEL_VARS.keys():

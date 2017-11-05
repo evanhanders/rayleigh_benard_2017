@@ -438,6 +438,7 @@ class BoussinesqEquations2D(Equations):
         snapshots.add_task("T1 + T0", name='T')
         snapshots.add_task("enstrophy")
         snapshots.add_task("vorticity")
+        snapshots.add_task("vel_rms")
         analysis_tasks.append(snapshots)
 
         snapshots_small = solver.evaluator.add_file_handler(data_dir+'slices_small', sim_dt=output_dt, max_writes=max_slice_writes, mode=mode)

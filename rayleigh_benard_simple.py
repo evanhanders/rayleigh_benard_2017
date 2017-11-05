@@ -171,10 +171,12 @@ def Rayleigh_Benard(Rayleigh=1e6, Prandtl=1, nz=64, nx=None, aspect=4,
     if do_bvp:
         bvp_solver = BoussinesqBVPSolver(BoussinesqEquations2D, nx, nz, \
                                    flow, equations.domain.dist.comm_cart, \
-                                   solver, num_bvps, bvp_equil_time,
-                                   bvp_transient_time=bvp_transient_time,
-                                   bvp_run_threshold=bvp_convergence_factor,
-                                   bvp_l2_check_time=1)
+                                   solver, num_bvps, bvp_equil_time, \
+                                   bvp_transient_time=bvp_transient_time, \
+                                   bvp_run_threshold=bvp_convergence_factor, \
+                                   bvp_l2_check_time=1, \
+                                   plot_dir='{}/bvp_plots/'.format(data_dir),\
+                                   min_avg_dt=0.05)
         bc_dict.pop('stress_free')
         bc_dict.pop('no_slip')
 
