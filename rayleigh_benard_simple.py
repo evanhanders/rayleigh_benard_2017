@@ -186,7 +186,8 @@ def Rayleigh_Benard(Rayleigh=1e6, Prandtl=1, nz=64, nx=None, aspect=4,
     try:
         logger.info('Starting loop')
         Re_avg = 0
-        while solver.ok and np.isfinite(Re_avg):
+        continue_bvps = True
+        while (solver.ok and np.isfinite(Re_avg)) and continue_bvps:
             dt = CFL.compute_dt()
             solver.step(dt) #, trim=True)
             Re_avg = flow.grid_average('Re')
@@ -204,8 +205,8 @@ def Rayleigh_Benard(Rayleigh=1e6, Prandtl=1, nz=64, nx=None, aspect=4,
                                    }
                     diff_args = [Rayleigh, Prandtl]
                     bvp_solver.solve_BVP(atmo_kwargs, diff_args, bc_dict)
-                    if bvp_solver.terminate_IVP():
-                        solver.ok = False
+                if bvp_solver.terminate_IVP():
+                    continue_bvps = False
 
 
             
