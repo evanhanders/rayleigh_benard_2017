@@ -293,7 +293,6 @@ class BVPSolverBase:
 
     def terminate_IVP(self):
         if not isinstance(self.final_equil_time, type(None)):
-            print(-(self.avg_time_start - self.solver.sim_time), self.final_equil_time, self.completed_bvps, self.num_bvps)
             if ((self.solver.sim_time - self.avg_time_start) >= self.final_equil_time) and (self.completed_bvps >= self.num_bvps):
                 return True
         else:
