@@ -436,8 +436,11 @@ class BoussinesqBVPSolver(BVPSolverBase):
         kappa_flux          = -atmosphere.P * self.profiles_dict['T_z_IVP']
         tot_flux            = kappa_flux + self.profiles_dict['enth_flux_IVP']
 #        w_prof = self.profiles_dict['w_rms_IVP']
+        mid = int(self.nz/2)
+        self.profiles_dict['enth_flux_IVP']  *= np.mean(tot_flux) / self.profiles_dict['enth_flux_IVP'][mid]
+        self.profiles_dict['enth_flux_IVP'][self.profiles_dict['enth_flux_IVP'] > np.mean(tot_flux)] = np.mean(tot_flux)
 #        self.profiles_dict['enth_flux_IVP']  = np.mean(enth_flux, axis=0)
-        self.profiles_dict['enth_flux_IVP']  *= np.mean(tot_flux) / self.profiles_dict['enth_flux_IVP'].max()
+#        self.profiles_dict['enth_flux_IVP']  *= np.mean(tot_flux) / self.profiles_dict['enth_flux_IVP'].max()
 #        self.profiles_dict['enth_flux_IVP']  = np.mean(tot_flux) * w_prof / w_prof.max() #vel_adjust
 
         f = atmosphere._new_field()
