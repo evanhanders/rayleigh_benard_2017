@@ -48,6 +48,7 @@ class BVPSolverBase:
         comm                - COMM_WORLD for IVP
         completed_bvps      - # of BVPs that have been completed during this run
         do_bvp              - If True, average profiles are converged, do BVP.
+        final_equil_time    - How long to allow the solution to equilibrate after the final bvp
         first_l2            - If True, we haven't taken an L2 average for convergence yet.
         flow                - A dedalus flow_tools.GlobalFlowProperty object for the IVP solver which is tracking
                                 the Reynolds number, and will track FIELDS variables
@@ -75,7 +76,7 @@ class BVPSolverBase:
 
     def __init__(self, nx, nz, flow, comm, solver, num_bvps, bvp_equil_time, bvp_transient_time=20,
                  bvp_run_threshold=1e-2, bvp_l2_check_time=1, min_bvp_time=0, plot_dir=None,
-                 min_avg_dt=0.05):
+                 min_avg_dt=0.05, final_equil_time = None):
         """
         Initializes the object; grabs solver states and makes room for profile averages
         
@@ -113,6 +114,7 @@ class BVPSolverBase:
         self.bvp_equil_time     = bvp_equil_time
         self.bvp_transient_time = bvp_transient_time
         self.avg_started        = False
+        self.final_equil_time   = final_equil_time
 
         # Stop parameters for bvps
         self.bvp_run_threshold      = bvp_run_threshold
@@ -288,6 +290,14 @@ class BVPSolverBase:
     def check_if_solve(self):
         """ Returns a boolean.  If True, it's time to solve a BVP """
         return (self.avg_started and self.avg_time_elapsed >= self.min_bvp_time) and (self.do_bvp and (self.completed_bvps < self.num_bvps))
+
+    def terminate_IVP(self):
+        if not isinstance(self.final_equil_time, type(None)):
+            if (self.avg_time_elapsed >= self.final_equil_time) and (self.completed_bvps >= self.num_bvps):
+                return True
+        else:
+            return False
+            
 
     def _reset_fields(self):
         """ Reset all local fields after doing a BVP """

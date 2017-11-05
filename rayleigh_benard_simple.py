@@ -39,9 +39,10 @@ Options:
     --root_dir=<dir>           Root directory for output [default: ./]
 
     --do_bvp                             If flagged, do BVPs at regular intervals when Re > 1 to converge faster
-    --num_bvps=<num>                     Max number of bvps to solve [default: 1]
-    --bvp_equil_time=<time>              How long to wait after a previous BVP before starting to average for next one, in tbuoy [default: 10]
-    --bvp_transient_time=<time>          How long to wait at beginning of run before starting to average for next one, in tbuoy [default: 10]
+    --num_bvps=<num>                     Max number of bvps to solve [default: 3]
+    --bvp_equil_time=<time>              How long to wait after a previous BVP before starting to average for next one, in tbuoy [default: 20]
+    --bvp_final_equil_time=<time>        How long to wait after last bvp before ending simulation 
+    --bvp_transient_time=<time>          How long to wait at beginning of run before starting to average for next one, in tbuoy [default: 30]
     --bvp_resolution_factor=<mult>       an int, how many times larger than nz should the bvp nz be? [default: 1]
     --bvp_convergence_factor=<fact>      How well converged time averages need to be for BVP [default: 1e-2]
 """
@@ -69,7 +70,7 @@ def Rayleigh_Benard(Rayleigh=1e6, Prandtl=1, nz=64, nx=None, aspect=4,
                     max_writes=20, max_slice_writes=20,
                     data_dir='./', coeff_output=True, verbose=False, no_join=False,
                     do_bvp=False, num_bvps=10, bvp_convergence_factor=1e-2, bvp_equil_time=10, bvp_resolution_factor=1,
-                    bvp_transient_time=30):
+                    bvp_transient_time=30, bvp_final_equil_time=None):
     import os
     from dedalus.tools.config import config
     
@@ -176,7 +177,7 @@ def Rayleigh_Benard(Rayleigh=1e6, Prandtl=1, nz=64, nx=None, aspect=4,
                                    bvp_run_threshold=bvp_convergence_factor, \
                                    bvp_l2_check_time=1, \
                                    plot_dir='{}/bvp_plots/'.format(data_dir),\
-                                   min_avg_dt=0.05)
+                                   min_avg_dt=0.05, final_equil_time=bvp_final_equil_time)
         bc_dict.pop('stress_free')
         bc_dict.pop('no_slip')
 
@@ -203,6 +204,8 @@ def Rayleigh_Benard(Rayleigh=1e6, Prandtl=1, nz=64, nx=None, aspect=4,
                                    }
                     diff_args = [Rayleigh, Prandtl]
                     bvp_solver.solve_BVP(atmo_kwargs, diff_args, bc_dict)
+                    if bvp_solver.terminate_IVP():
+                        solver.ok = False
 
 
             
@@ -318,6 +321,10 @@ if __name__ == "__main__":
     run_time_therm = args['--run_time_therm']
     if not isinstance(run_time_therm, type(None)):
         run_time_therm = float(run_time_therm)
+
+    bvp_final_equil_time=args['--bvp_final_equil_time']
+    if not isinstance(bvp_final_equil_time, type(None)):
+        bvp_final_equil_time = float(bvp_final_equil_time)
         
     Rayleigh_Benard(Rayleigh=float(args['--Rayleigh']),
                     Prandtl=float(args['--Prandtl']),
@@ -340,10 +347,11 @@ if __name__ == "__main__":
                     verbose=args['--verbose'],
                     no_join=args['--no_join'],
                     do_bvp=args['--do_bvp'],
-                     num_bvps=int(args['--num_bvps']),
-                     bvp_convergence_factor=float(args['--bvp_convergence_factor']),
-                     bvp_equil_time=float(args['--bvp_equil_time']),
-                     bvp_transient_time=float(args['--bvp_transient_time']),
-                     bvp_resolution_factor=int(args['--bvp_resolution_factor']))
+                    num_bvps=int(args['--num_bvps']),
+                    bvp_convergence_factor=float(args['--bvp_convergence_factor']),
+                    bvp_equil_time=float(args['--bvp_equil_time']),
+                    bvp_final_equil_time=bvp_final_equil_time,
+                    bvp_transient_time=float(args['--bvp_transient_time']),
+                    bvp_resolution_factor=int(args['--bvp_resolution_factor']))
     
 
