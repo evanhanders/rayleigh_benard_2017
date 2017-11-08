@@ -350,7 +350,7 @@ class BoussinesqBVPSolver(BVPSolverBase):
     FIELDS = OrderedDict([  
                 ('enth_flux_IVP',       ('w*(T0+T1)', 0)),                      
                 ('T_z_IVP',             ('(T0_z+T1_z)', 0)),                      
-                ('T_forcing',           ('dz(w*(T0+T1) - P *(T0_z+T1_z))', 0)),                      
+#                ('T_forcing',           ('dz(w*(T0+T1) - P *(T0_z+T1_z))', 0)),                      
                 ('T1_IVP',              ('T1', 0)),                      
                 ('T1_z_IVP',            ('T1_z', 0)),                    
                 ('p_IVP',               ('p', 0)), 
@@ -378,7 +378,7 @@ class BoussinesqBVPSolver(BVPSolverBase):
         problem.add_equation("dz(T1) - T1_z = 0")
 
         logger.debug('Setting energy equation')
-        problem.add_equation(("P*dz(T1_z) = T_forcing"))#+ extra_T_forcing"))#dz(enth_flux_IVP - P*(T_z_IVP))"))
+        problem.add_equation(("P*dz(T1_z) = dz(enth_flux_IVP - P*T_z_IVP)"))
         
         logger.debug('Setting HS equation')
         problem.add_equation(("dz(p1) - T1 = 0"))# w_forcing"))
@@ -408,10 +408,25 @@ class BoussinesqBVPSolver(BVPSolverBase):
         z.set_scales(self.nz/atmosphere.nz, keep_data=True)
         z = z['g']
 
+
+        # Adjust the enthalpy flux so that it on average carries all atmospheric flux in the bulk.
+        kappa_flux          = -atmosphere.P * self.profiles_dict['T_z_IVP']
+        tot_flux            = kappa_flux + self.profiles_dict['enth_flux_IVP']
+        bottom = z[0]
+        top    = z[-1]
+        quarter = bottom + 0.25*(top-bottom)
+        three_quarter = bottom + 0.75*(top-bottom)
+        xs = z[(z>=quarter)*(z<=three_quarter)]
+        ys = self.profiles_dict['enth_flux_IVP'][(z>=quarter)*(z<=three_quarter)]
+        p = np.polyfit(xs, ys, 1)
+        line = p[0]*z + p[1]
+        self.profiles_dict['enth_flux_IVP']  *= tot_flux / line
+
         if not isinstance(self.plot_dir, type(None)):
-            plt.plot(z, -atmosphere.P*self.profiles_dict['T_z_IVP']+self.profiles_dict['enth_flux_IVP'])
+            plt.plot(z, -atmosphere.P*self.profiles_dict['T_z_IVP']+self.profiles_dict['enth_flux_IVP']*line/tot_flux)
             plt.plot(z, -atmosphere.P*self.profiles_dict['T_z_IVP'])
-            plt.plot(z, self.profiles_dict['enth_flux_IVP'])
+            plt.plot(z, self.profiles_dict['enth_flux_IVP']*line/tot_flux)
+            plt.plot(z, line)
             plt.savefig('{}/fluxes_{:04d}.png'.format(self.plot_dir, self.plot_count))
             plt.close()
             for fd in self.FIELDS.keys():
@@ -423,19 +438,10 @@ class BoussinesqBVPSolver(BVPSolverBase):
         self.plot_count += 1
 
 
-        # Adjust the enthalpy flux so that it on average carries all atmospheric flux in the bulk.
-        kappa_flux          = -atmosphere.P * self.profiles_dict['T_z_IVP']
-        tot_flux            = kappa_flux + self.profiles_dict['enth_flux_IVP']
-        mid = int(self.nz/2)
-        num_pts_mid = int(self.nz/10)
-        xs = z[mid-num_pts_mid:mid+num_pts_mid]
-        ys = self.profiles_dict['enth_flux_IVP'][mid-num_pts_mid:mid+num_pts_mid]
-        p = np.polyfit(xs, ys, 1)
-        line = p[0]*z + p[1]
-        self.profiles_dict['enth_flux_IVP']  *= tot_flux / line
+
         
         #In the simulation, adjust the velocity field by a constant value according to the mean drop in enth flux.
-        vel_adjust = np.mean(tot_flux / line)
+        vel_adjust = 1  #np.mean(tot_flux / line)
         vel_adjust_factor *= vel_adjust
 
         #Adjust temperature forcing for the next bvp solve.
@@ -479,6 +485,8 @@ class BoussinesqBVPSolver(BVPSolverBase):
             vel_adjust_factor = 1
             first=True
             while avg_change > 1e-9:
+
+
                 atmosphere = self.atmosphere_class(dimensions=1, comm=MPI.COMM_SELF, **atmosphere_kwargs)
                 atmosphere.problem = de.NLBVP(atmosphere.domain, variables=['T1', 'T1_z','p1'], ncc_cutoff=tolerance)
 
@@ -489,7 +497,7 @@ class BoussinesqBVPSolver(BVPSolverBase):
 
                 atmosphere._set_parameters(*diffusivity_args)
                 atmosphere._set_subs()
-
+ 
                 #Add time and horizontally averaged profiles from IVP to the problem as parameters
                 for k in self.FIELDS.keys():
                     f = atmosphere._new_ncc()
