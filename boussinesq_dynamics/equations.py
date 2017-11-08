@@ -216,13 +216,12 @@ class BoussinesqEquations2D(Equations):
     An extension of the Equations class which contains the full 2D form of the boussinesq
     equations.   
     """
-    def __init__(self,*args,  stream_function=False, dimensions=2, **kwargs):
-        self.stream_function = stream_function
+    def __init__(self,*args,  dimensions=2, **kwargs):
+#        self.stream_function = stream_function
         super(BoussinesqEquations2D, self).__init__(dimensions=dimensions)
-        if self.stream_function:
-            self.variables=['T1_z','T1','p','u','w','Oy']
-        else:
-            self.variables=['p','T1','u','w','T1_z','uz','wz']
+        self.variables=['T1_z','T1','p','u','w','Oy']
+#        else:
+#            self.variables=['p','T1','u','w','T1_z','uz','wz']
 
         self.set_domain(*args, **kwargs)
 
@@ -267,8 +266,6 @@ class BoussinesqEquations2D(Equations):
         self.problem.substitutions['UdotGrad(A, A_z)'] = '(u * dx(A) + w * A_z)'
         self.problem.substitutions['Lap(A, A_z)'] = '(dx(dx(A)) + dz(A_z))'
        
-        if not self.stream_function:
-            self.problem.substitutions['Oy'] =  '(dz(u) - dx(w))'
         self.problem.substitutions['v'] = '0'
         self.problem.substitutions['Ox'] = '0'
         self.problem.substitutions['Oz'] = '(dx(v) )'
@@ -410,21 +407,20 @@ class BoussinesqEquations2D(Equations):
         self._set_subs(viscous_heating=viscous_heating)
 
 
-        if self.stream_function:
-            self.problem.add_equation("dt(T1) - P*(dx(dx(T1)) + dz(T1_z)) + w*T0_z   = -(u*dx(T1) + w*T1_z)  + visc_heat_R")
-            self.problem.add_equation("dt(u)  + R*Kx  + dx(p)              =  v*Oz - w*Oy ")
-            self.problem.add_equation("dt(w)  + R*Kz  + dz(p)    - T1        =  u*Oy - v*Ox ")
-            self.problem.add_equation("dx(u) + dz(w) = 0")
-            self.problem.add_equation("Oy - dz(u) + dx(w) = 0")
-            self.problem.add_equation("T1_z - dz(T1) = 0")
-        else:
-            self.problem.add_equation("dx(u) + wz = 0")
-            self.problem.add_equation("dt(T1) - P*Lap(T1, T1_z) + w*T0_z  = -UdotGrad(T1, T1_z) + visc_heat_R")
-            self.problem.add_equation("dt(u)  - R*Lap(u, uz) + dx(p)      = -UdotGrad(u, uz)")
-            self.problem.add_equation("dt(w)  - R*Lap(w, wz) + dz(p) - T1 = -UdotGrad(w, wz)")
-            self.problem.add_equation("T1_z - dz(T1) = 0")
-            self.problem.add_equation("uz - dz(u) = 0")
-            self.problem.add_equation("wz - dz(w) = 0")
+        self.problem.add_equation("dt(T1) - P*Lap(T1, T1_z) + w*T0_z   = -UdotGrad(T1, T1_z)  + visc_heat_R")
+        self.problem.add_equation("dt(u)  + R*Kx  + dx(p)              =  v*Oz - w*Oy ")
+        self.problem.add_equation("dt(w)  + R*Kz  + dz(p)    - T1      =  u*Oy - v*Ox ")
+        self.problem.add_equation("dx(u) + dz(w) = 0")
+        self.problem.add_equation("Oy - dz(u) + dx(w) = 0")
+        self.problem.add_equation("T1_z - dz(T1) = 0")
+#        else:
+#            self.problem.add_equation("dx(u) + wz = 0")
+#            self.problem.add_equation("dt(T1) - P*Lap(T1, T1_z) + w*T0_z  = -UdotGrad(T1, T1_z) + visc_heat_R")
+#            self.problem.add_equation("dt(u)  - R*Lap(u, uz) + dx(p)      = -UdotGrad(u, uz)")
+#            self.problem.add_equation("dt(w)  - R*Lap(w, wz) + dz(p) - T1 = -UdotGrad(w, wz)")
+#            self.problem.add_equation("T1_z - dz(T1) = 0")
+#            self.problem.add_equation("uz - dz(u) = 0")
+#            self.problem.add_equation("wz - dz(w) = 0")
 
     def initialize_output(self, solver, data_dir, coeff_output=False,
                           max_writes=20, max_slice_writes=20, output_dt=0.25,
