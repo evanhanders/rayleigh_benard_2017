@@ -297,12 +297,10 @@ class BoussinesqEquations2D(Equations):
         self.problem.substitutions['sigma_zz'] = '(2*dz(w))'
 
         if viscous_heating:
-            self.problem.substitutions['visc_heat_L'] = '0'#(-1 * w * T1)'
             self.problem.substitutions['visc_heat_R'] = '(-1 * R * vorticity**2 - w * T1)'
 #            self.problem.substitutions['visc_heat']   = 'R*(sigma_xz**2 + sigma_xx*dx(u) + sigma_zz*dz(w))'
             self.problem.substitutions['visc_flux_z'] = 'R*(u*sigma_xz + w*sigma_zz)'
         else:
-            self.problem.substitutions['visc_heat_L']   = '0'
             self.problem.substitutions['visc_heat_R']   = '0'
             self.problem.substitutions['visc_flux_z'] = '0'
             
@@ -413,7 +411,7 @@ class BoussinesqEquations2D(Equations):
 
 
         if self.stream_function:
-            self.problem.add_equation("dt(T1) - P*(dx(dx(T1)) + dz(T1_z)) + w*T0_z  - visc_heat_L  = -(u*dx(T1) + w*T1_z)  + visc_heat_R")
+            self.problem.add_equation("dt(T1) - P*(dx(dx(T1)) + dz(T1_z)) + w*T0_z   = -(u*dx(T1) + w*T1_z)  + visc_heat_R")
             self.problem.add_equation("dt(u)  + R*Kx  + dx(p)              =  v*Oz - w*Oy ")
             self.problem.add_equation("dt(w)  + R*Kz  + dz(p)    - T1        =  u*Oy - v*Ox ")
             self.problem.add_equation("dx(u) + dz(w) = 0")
@@ -421,7 +419,7 @@ class BoussinesqEquations2D(Equations):
             self.problem.add_equation("T1_z - dz(T1) = 0")
         else:
             self.problem.add_equation("dx(u) + wz = 0")
-            self.problem.add_equation("dt(T1) - P*Lap(T1, T1_z) + w*T0_z - visc_heat_L = -UdotGrad(T1, T1_z) + visc_heat_R")
+            self.problem.add_equation("dt(T1) - P*Lap(T1, T1_z) + w*T0_z  = -UdotGrad(T1, T1_z) + visc_heat_R")
             self.problem.add_equation("dt(u)  - R*Lap(u, uz) + dx(p)      = -UdotGrad(u, uz)")
             self.problem.add_equation("dt(w)  - R*Lap(w, wz) + dz(p) - T1 = -UdotGrad(w, wz)")
             self.problem.add_equation("T1_z - dz(T1) = 0")
@@ -437,15 +435,10 @@ class BoussinesqEquations2D(Equations):
         snapshots = solver.evaluator.add_file_handler(data_dir+'slices', sim_dt=output_dt, max_writes=max_slice_writes, mode=mode)
         snapshots.add_task("T1 + T0", name='T')
         snapshots.add_task("enstrophy")
-        snapshots.add_task("vorticity")
         snapshots.add_task("vel_rms")
+        snapshots.add_task("u")
+        snapshots.add_task("w")
         analysis_tasks.append(snapshots)
-
-        snapshots_small = solver.evaluator.add_file_handler(data_dir+'slices_small', sim_dt=output_dt, max_writes=max_slice_writes, mode=mode)
-        snapshots_small.add_task("T1 + T0", name='T', scales=0.25)
-        snapshots_small.add_task("enstrophy", scales=0.25)
-        snapshots_small.add_task("vorticity", scales=0.25)
-        analysis_tasks.append(snapshots_small)
 
         if coeff_output:
             coeffs = solver.evaluator.add_file_handler(data_dir+'coeffs', sim_dt=output_dt, max_writes=max_slice_writes, mode=mode)
@@ -481,6 +474,9 @@ class BoussinesqEquations2D(Equations):
         scalar.add_task("vol_avg(plane_avg(u)**2)", name="u_avg")
         scalar.add_task("vol_avg((u - plane_avg(u))**2)", name="u1")
         scalar.add_task("vol_avg(conv_flux_z) + 1.", name="Nu")
+        scalar.add_task("(1-vol_avg(conv_flux_z))**(-1.)", name="Nu_flux")
+        scalar.add_task("vol_avg(Re)", name="Re")
+        scalar.add_task("vol_avg(Pe)", name="Pe")
         analysis_tasks.append(scalar)
 
         return analysis_tasks
