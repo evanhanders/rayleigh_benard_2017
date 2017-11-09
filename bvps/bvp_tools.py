@@ -490,7 +490,7 @@ class BoussinesqBVPSolver(BVPSolverBase):
         for i in range(pow_fit+1):
             line += p[i]*z**(pow_fit-i)
         self.profiles_dict['enth_flux_IVP']  *= tot_flux / line
-        self.profiles_dict['enth_flux_IVP'][self.profiles_dict['enth_flux_IVP'] > tot_flux] = tot_flux[self.profiles_dict['enth_flux_IVP'] > tot_flux]
+#        self.profiles_dict['enth_flux_IVP'][self.profiles_dict['enth_flux_IVP'] > tot_flux] = tot_flux[self.profiles_dict['enth_flux_IVP'] > tot_flux]
 
         if not isinstance(self.plot_dir, type(None)):
             plt.plot(z, -atmosphere.P*self.profiles_dict['T_z_IVP']+self.profiles_dict['enth_flux_IVP']*line/tot_flux)
