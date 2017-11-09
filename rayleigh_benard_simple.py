@@ -236,6 +236,7 @@ def Rayleigh_Benard(Rayleigh=1e6, Prandtl=1, nz=64, nx=None, aspect=4,
                 first_step=False
                 start_time = time.time()
     except:
+        raise
         logger.error('Exception raised, triggering end of main loop.')
     finally:
         end_time = time.time()

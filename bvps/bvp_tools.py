@@ -361,8 +361,10 @@ class BoussinesqBVPSolver(BVPSolverBase):
                         ])
     VEL_VARS = OrderedDict([
                 ('w_IVP',               'w'), 
+                ('wz_IVP',               'wz'), 
                 ('u_IVP',               'u'), 
-                ('Oy_IVP',              'Oy'), 
+                ('uz_IVP',               'uz'), 
+#                ('Oy_IVP',              'Oy'), 
                         ])
 
     def __init__(self, atmosphere_class, *args, **kwargs):
@@ -511,7 +513,7 @@ class BoussinesqBVPSolver(BVPSolverBase):
 
         
         #In the simulation, adjust the velocity field by a constant value according to the mean drop in enth flux.
-        vel_adjust = 1  #np.mean(tot_flux / line)
+        vel_adjust = np.mean(tot_flux / line)
         vel_adjust_factor *= vel_adjust
 
         #Report
