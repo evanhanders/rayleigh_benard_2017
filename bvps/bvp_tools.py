@@ -4,6 +4,7 @@ logger = logging.getLogger(__name__)
 
 
 from mpi4py import MPI
+import h5py
 import numpy as np
 import matplotlib
 matplotlib.use('Agg')
@@ -174,6 +175,7 @@ class BVPSolverBase:
 
 
         self.plot_dir = plot_dir
+        self.files_saved = 0
         if not isinstance(self.plot_dir, type(None)):
             import os
             if self.rank == 0 and not os.path.exists('{:s}'.format(self.plot_dir)):
@@ -291,6 +293,24 @@ class BVPSolverBase:
         """ Returns a boolean.  If True, it's time to solve a BVP """
         return (self.avg_started and self.avg_time_elapsed >= self.min_bvp_time) and (self.do_bvp and (self.completed_bvps < self.num_bvps))
 
+    def _save_file(self):
+        """  Saves profiles dict to file """
+        if not isinstance(self.plot_dir, type(None)):
+            z_profile = np.zeros(self.nz)
+            z_profile[self.rank*self.n_per_proc:(self.rank+1)*self.n_per_proc] = self.solver.domain.grid(-1)
+            global_z = np.zeros_like(z_profile)
+            self.comm.Allreduce(z_profile, global_z, op=MPI.SUM)
+            if self.rank == 0:
+                file_name = self.plot_dir + "profile_dict_file_{:04d}.h5".format(self.files_saved)
+                with h5py.File(file_name, 'w') as f:
+                    for k, item in self.profiles_dict.items():
+                        print(k, item)
+                        f[k] = item
+                    f['z'] = global_z
+            self.files_saved += 1
+                    
+            
+
     def terminate_IVP(self):
         if not isinstance(self.final_equil_time, type(None)):
             if ((self.solver.sim_time - self.avg_time_start) >= self.final_equil_time) and (self.completed_bvps >= self.num_bvps):
@@ -331,6 +351,7 @@ class BVPSolverBase:
             if self.rank == 0:
                 self.profiles_dict[fd] = curr_profile/self.avg_time_elapsed
                 self.profiles_dict_curr[fd] = 1*self.profiles_dict[fd]
+        self._save_file()
 
         # Restart counters for next BVP
         self.avg_time_elapsed   = 0.
