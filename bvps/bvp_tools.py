@@ -257,9 +257,7 @@ class BVPSolverBase:
             #Update sums for averages. Check to see if we're converged enough for a BVP.
             self.avg_time_elapsed += dt
             self.curr_avg_dt      += dt
-            ready_for_bvp = True
             if self.curr_avg_dt >= self.min_avg_dt:
-#                print('averaging with dt {}', self.curr_avg_dt)
                 for fd, info in self.FIELDS.items():
                     field, avg_type = self.FIELDS[fd]
                     self.update_local_profiles(self.curr_avg_dt, fd, avg_type=avg_type)
@@ -267,26 +265,25 @@ class BVPSolverBase:
                     if self.first_l2:
                         self.current_local_l2[fd]  = 0
                         self.current_local_avg[fd] = avg
-                        ready_for_bvp = False
                         continue
                     else:
-                        self.current_local_l2[fd] = np.mean(np.abs((self.current_local_avg[fd] - avg)/self.current_local_avg[fd]))
+                        self.current_local_l2[fd] = np.sum(np.abs((self.current_local_avg[fd] - avg)/self.current_local_avg[fd]))
                         self.current_local_avg[fd] = avg
-                    if self.current_local_l2[fd] >= self.bvp_run_threshold:
-                        ready_for_bvp = False
-                self.first_l2 = False
 
-                if (self.solver.sim_time - self.bvp_l2_last_check_time) > self.bvp_l2_check_time:
-                    local, globl = np.zeros(1), np.zeros(1)
-                    local[0] = int(ready_for_bvp)
+                if (self.solver.sim_time - self.bvp_l2_last_check_time) > self.bvp_l2_check_time and not self.first_l2:
+                    local, globl = np.zeros(len(self.FIELDS.keys())), np.zeros(len(self.FIELDS.keys()))
+                    for i, k in enumerate(self.FIELDS.keys()):
+                        local[i] = self.current_local_l2[k]
                     self.comm.Allreduce(local, globl, op=MPI.SUM)
-                    logger.info('{}/{} processors converged for BVP solve'.format(globl[0], self.size))
-                    if globl[0] == self.size:
+                    globl /= self.nz
+                    logger.info('Max avg convergence: {:.4g} / {:.4g} for BVP solve'.format(np.max(globl), self.bvp_run_threshold))
+                    if np.max(globl) < self.bvp_run_threshold:
                         self.do_bvp = True
                     else:
                         self.do_bvp = False
                     self.bvp_l2_last_check_time = self.solver.sim_time
                 self.curr_avg_dt = 0.
+                self.first_l2 = False
 
 
     def check_if_solve(self):
@@ -574,7 +571,7 @@ class BoussinesqBVPSolver(BVPSolverBase):
                 atmosphere.problem = de.NLBVP(atmosphere.domain, variables=['T1', 'T1_z','p1'], ncc_cutoff=tolerance)
 
                 #Zero out old varables to make atmospheric substitutions happy.
-                old_vars = ['u', 'w', 'dx(A)', 'Oy']
+                old_vars = ['u', 'w', 'dx(A)', 'uz', 'wz']
                 for sub in old_vars:
                     atmosphere.problem.substitutions[sub] = '0'
 
