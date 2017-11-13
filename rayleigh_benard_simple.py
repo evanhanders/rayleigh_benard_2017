@@ -40,9 +40,10 @@ Options:
 
     --do_bvp                             If flagged, do BVPs at regular intervals when Re > 1 to converge faster
     --num_bvps=<num>                     Max number of bvps to solve [default: 3]
-    --bvp_equil_time=<time>              How long to wait after a previous BVP before starting to average for next one, in tbuoy [default: 20]
+    --bvp_equil_time=<time>              How long to wait after a previous BVP before starting to average for next one, in tbuoy [default: 100]
     --bvp_final_equil_time=<time>        How long to wait after last bvp before ending simulation 
-    --bvp_transient_time=<time>          How long to wait at beginning of run before starting to average for next one, in tbuoy [default: 30]
+    --bvp_transient_time=<time>          How long to wait at beginning of run before starting to average for next one, in tbuoy [default: 50]
+    --min_bvp_time=<time>                Minimum avg time for a bvp (in tbuoy) [default: 50]
     --bvp_resolution_factor=<mult>       an int, how many times larger than nz should the bvp nz be? [default: 1]
     --bvp_convergence_factor=<fact>      How well converged time averages need to be for BVP [default: 1e-2]
 """
@@ -70,7 +71,7 @@ def Rayleigh_Benard(Rayleigh=1e6, Prandtl=1, nz=64, nx=None, aspect=4,
                     max_writes=20, max_slice_writes=20,
                     data_dir='./', coeff_output=True, verbose=False, no_join=False,
                     do_bvp=False, num_bvps=10, bvp_convergence_factor=1e-2, bvp_equil_time=10, bvp_resolution_factor=1,
-                    bvp_transient_time=30, bvp_final_equil_time=None):
+                    bvp_transient_time=30, bvp_final_equil_time=None, min_bvp_time=50):
     import os
     from dedalus.tools.config import config
     
@@ -103,7 +104,7 @@ def Rayleigh_Benard(Rayleigh=1e6, Prandtl=1, nz=64, nx=None, aspect=4,
         nx = int(nz*aspect)
     logger.info("resolution: [{}x{}]".format(nx, nz))
 
-    equations = BoussinesqEquations2D(stream_function=stress_free, nx=nx, nz=nz, Lx=Lx, Lz=Lz)
+    equations = BoussinesqEquations2D(nx=nx, nz=nz, Lx=Lx, Lz=Lz)
     equations.set_IVP(Rayleigh, Prandtl, viscous_heating=viscous_heating)
 
     bc_dict = { 'fixed_flux'              :   None,
@@ -177,7 +178,8 @@ def Rayleigh_Benard(Rayleigh=1e6, Prandtl=1, nz=64, nx=None, aspect=4,
                                    bvp_run_threshold=bvp_convergence_factor, \
                                    bvp_l2_check_time=1, \
                                    plot_dir='{}/bvp_plots/'.format(data_dir),\
-                                   min_avg_dt=0.05, final_equil_time=bvp_final_equil_time)
+                                   min_avg_dt=0.025, final_equil_time=bvp_final_equil_time,
+                                   min_bvp_time=min_bvp_time)
         bc_dict.pop('stress_free')
         bc_dict.pop('no_slip')
 
@@ -199,8 +201,7 @@ def Rayleigh_Benard(Rayleigh=1e6, Prandtl=1, nz=64, nx=None, aspect=4,
             if do_bvp:
                 bvp_solver.update_avgs(dt, min_Re=1e0)
                 if bvp_solver.check_if_solve():
-                    atmo_kwargs = { 'stream_function' : stress_free,
-                                    'nz'              : nz*bvp_resolution_factor,
+                    atmo_kwargs = { 'nz'              : nz*bvp_resolution_factor,
                                     'Lz'              : Lz
                                    }
                     diff_args = [Rayleigh, Prandtl]
@@ -235,8 +236,8 @@ def Rayleigh_Benard(Rayleigh=1e6, Prandtl=1, nz=64, nx=None, aspect=4,
                 first_step=False
                 start_time = time.time()
     except:
-        logger.error('Exception raised, triggering end of main loop.')
         raise
+        logger.error('Exception raised, triggering end of main loop.')
     finally:
         end_time = time.time()
         main_loop_time = end_time-start_time
@@ -252,21 +253,23 @@ def Rayleigh_Benard(Rayleigh=1e6, Prandtl=1, nz=64, nx=None, aspect=4,
             solver.step(dt) #clean this up in the future...works for now.
             post.merge_process_files(data_dir+'/final_checkpoint/', cleanup=False)
         except:
+            raise
             print('cannot save final checkpoint')
-        if not no_join:
-            logger.info('beginning join operation')
-            post.merge_analysis(data_dir+'checkpoints')
+        finally:
+            if not no_join:
+                logger.info('beginning join operation')
+                post.merge_analysis(data_dir+'checkpoints')
 
-            for task in analysis_tasks:
-                logger.info(task.base_path)
-                post.merge_analysis(task.base_path)
+                for task in analysis_tasks:
+                    logger.info(task.base_path)
+                    post.merge_analysis(task.base_path)
 
-        logger.info(40*"=")
-        logger.info('Iterations: {:d}'.format(n_iter_loop))
-        logger.info('Sim end time: {:f}'.format(solver.sim_time))
-        logger.info('Run time: {:f} sec'.format(main_loop_time))
-        logger.info('Run time: {:f} cpu-hr'.format(main_loop_time/60/60*equations.domain.dist.comm_cart.size))
-        logger.info('iter/sec: {:f} (main loop only)'.format(n_iter_loop/main_loop_time))
+            logger.info(40*"=")
+            logger.info('Iterations: {:d}'.format(n_iter_loop))
+            logger.info('Sim end time: {:f}'.format(solver.sim_time))
+            logger.info('Run time: {:f} sec'.format(main_loop_time))
+            logger.info('Run time: {:f} cpu-hr'.format(main_loop_time/60/60*equations.domain.dist.comm_cart.size))
+            logger.info('iter/sec: {:f} (main loop only)'.format(n_iter_loop/main_loop_time))
 
 if __name__ == "__main__":
     from docopt import docopt
@@ -353,6 +356,7 @@ if __name__ == "__main__":
                     bvp_equil_time=float(args['--bvp_equil_time']),
                     bvp_final_equil_time=bvp_final_equil_time,
                     bvp_transient_time=float(args['--bvp_transient_time']),
-                    bvp_resolution_factor=int(args['--bvp_resolution_factor']))
+                    bvp_resolution_factor=int(args['--bvp_resolution_factor']),
+                    min_bvp_time=float(args['--min_bvp_time']))
     
 

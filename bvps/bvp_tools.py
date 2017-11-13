@@ -76,7 +76,7 @@ class BVPSolverBase:
     VEL_VARS   = None
 
     def __init__(self, nx, nz, flow, comm, solver, num_bvps, bvp_equil_time, bvp_transient_time=20,
-                 bvp_run_threshold=1e-2, bvp_l2_check_time=1, min_bvp_time=0, plot_dir=None,
+                 bvp_run_threshold=1e-2, bvp_l2_check_time=1, min_bvp_time=50, plot_dir=None,
                  min_avg_dt=0.05, final_equil_time = None):
         """
         Initializes the object; grabs solver states and makes room for profile averages
@@ -371,7 +371,6 @@ class BoussinesqBVPSolver(BVPSolverBase):
     FIELDS = OrderedDict([  
                 ('enth_flux_IVP',       ('w*(T0+T1)', 0)),                      
                 ('T_z_IVP',             ('(T0_z+T1_z)', 0)),                      
-                ('T_forcing',           ('dz(w*(T0+T1) - P *(T0_z+T1_z))', 0)),                      
                 ('T1_IVP',              ('T1', 0)),                      
                 ('T1_z_IVP',            ('T1_z', 0)),                    
                 ('p_IVP',               ('p', 0)), 
@@ -399,7 +398,7 @@ class BoussinesqBVPSolver(BVPSolverBase):
         problem.add_equation("dz(T1) - T1_z = 0")
 
         logger.debug('Setting energy equation')
-        problem.add_equation(("P*dz(T1_z) = T_forcing"))#+ extra_T_forcing"))#dz(enth_flux_IVP - P*(T_z_IVP))"))
+        problem.add_equation(("P*dz(T1_z) = dz(enth_flux_IVP - P*T_z_IVP)"))
         
         logger.debug('Setting HS equation')
         problem.add_equation(("dz(p1) - T1 = 0"))# w_forcing"))
@@ -412,6 +411,69 @@ class BoussinesqBVPSolver(BVPSolverBase):
         for key in atmosphere.dirichlet_set:
             atmosphere.problem.meta[key]['z']['dirichlet'] = True
 
+    def _find_BL_thick(self, z):
+        """
+        Find boundary layer thickness of top and bottom temperature profiles
+        """
+        bottom = z[0]
+        top    = z[-1]
+        quarter = bottom + 0.3*(top-bottom)
+        three_quarter = bottom + 0.7*(top-bottom)
+        xs = z[(z>=quarter)*(z<=three_quarter)]
+        ys = self.profiles_dict['T1_z_IVP'][(z>=quarter)*(z<=three_quarter)]
+
+        mean = np.mean(ys)
+        stdev = np.std(ys)
+
+        err = np.abs(self.profiles_dict['T1_z_IVP'] - mean)
+
+        # Find which points are in / out of boundary layers
+        lower = z[:int(len(z)/2)]
+        lower_T = self.profiles_dict['T1_IVP'][:int(len(z)/2)]
+        lower_e = err[:int(len(z)/2)]
+        upper = z[int(len(z)/2):]
+        upper_T = self.profiles_dict['T1_IVP'][int(len(z)/2):]
+        upper_e = err[int(len(z)/2):]
+
+        diff_bad = 3*stdev
+
+        lower_z = lower[lower_e > diff_bad]
+        lower_y = lower_T[lower_e > diff_bad]
+        upper_z = upper[upper_e > diff_bad]
+        upper_y = upper_T[upper_e > diff_bad]
+        
+        mid_lower_z = lower[lower_e < diff_bad]
+        mid_lower_y = lower_T[lower_e < diff_bad]
+        mid_upper_z = upper[upper_e < diff_bad]
+        mid_upper_y = upper_T[upper_e < diff_bad]
+
+        # Fit lines
+        line_low = np.polyfit(lower_z, lower_y, 1)
+        line_upp = np.polyfit(upper_z, upper_y, 1)
+        line_mid_low = np.polyfit(mid_lower_z, mid_lower_y, 1)
+        line_mid_upp = np.polyfit(mid_upper_z, mid_upper_y, 1)
+
+        # Calculate boundary layer thicknesses
+        low_bl = (line_low[1] - line_mid_low[1])/(line_mid_low[0] - line_low[0])
+        upp_bl = (line_upp[1] - line_mid_upp[1])/(line_mid_upp[0] - line_upp[0])
+
+        # Make plot of boundary layer find
+        plt.plot(z, self.profiles_dict['T1_IVP'])
+        plt.plot(lower, lower*line_mid_low[0] + line_mid_low[1])
+        plt.plot(upper, upper*line_mid_upp[0] + line_mid_upp[1])
+        plt.plot(z, z*line_low[0] + line_low[1])
+        plt.plot(z, z*line_upp[0] + line_upp[1])
+        plt.axvline(low_bl)
+        plt.axvline(upp_bl)
+        plt.ylim(np.min(self.profiles_dict['T1_IVP']), np.max(self.profiles_dict['T1_IVP']))
+        plt.xlim(np.min(z), np.max(z))
+        plt.savefig('{}/bl_find_{:04d}.png'.format(self.plot_dir, self.plot_count))
+        plt.close()
+
+        return low_bl, upp_bl
+
+        
+
     def _update_profiles_dict(self, solver, atmosphere, vel_adjust_factor, first=False):
         #Get solver states
         T1 = solver.state['T1']
@@ -419,20 +481,44 @@ class BoussinesqBVPSolver(BVPSolverBase):
         P1   = solver.state['p1']
 
 
-        # Update temperature fields for next solve. May need to add some logic here if nx == nz.
-        T1_z.set_scales(self.nz/atmosphere.nz, keep_data=True)
-        self.profiles_dict['T_z_IVP'] += T1_z['g']
-
-
         z = atmosphere._new_field()
         z['g'] = atmosphere.z
         z.set_scales(self.nz/atmosphere.nz, keep_data=True)
         z = z['g']
 
+        bl_bot, bl_top = self._find_BL_thick(z)
+
+        # Update temperature fields for next solve. May need to add some logic here if nx == nz.
+        T1_z.set_scales(self.nz/atmosphere.nz, keep_data=True)
+        self.profiles_dict['T_z_IVP'] += T1_z['g']
+
+        # Adjust the enthalpy flux so that it on average carries all atmospheric flux in the bulk.
+        kappa_flux          = -atmosphere.P * self.profiles_dict['T_z_IVP']
+        tot_flux            = kappa_flux + self.profiles_dict['enth_flux_IVP']
+        xs = z[(z>bl_bot)*(z<bl_top)]
+        ys = self.profiles_dict['enth_flux_IVP'][(z>bl_bot)*(z<bl_top)]
+
+        powers = np.arange(9)
+        for i in range(len(powers)):
+            n = 1+i
+            p = np.polyfit(xs, ys, n)
+            line = np.zeros_like(xs)
+            for j in range(n+1):
+                line += p[j]*xs**(n-j)
+            powers[i] = np.sum(np.abs( (line - ys) / ys))
+        pow_fit = np.argmin(powers) + 1
+        p = np.polyfit(xs, ys, pow_fit)
+        line = np.zeros_like(z)
+        for i in range(pow_fit+1):
+            line += p[i]*z**(pow_fit-i)
+        self.profiles_dict['enth_flux_IVP']  *= tot_flux / line
+#        self.profiles_dict['enth_flux_IVP'][self.profiles_dict['enth_flux_IVP'] > tot_flux] = tot_flux[self.profiles_dict['enth_flux_IVP'] > tot_flux]
+
         if not isinstance(self.plot_dir, type(None)):
-            plt.plot(z, -atmosphere.P*self.profiles_dict['T_z_IVP']+self.profiles_dict['enth_flux_IVP'])
+            plt.plot(z, -atmosphere.P*self.profiles_dict['T_z_IVP']+self.profiles_dict['enth_flux_IVP']*line/tot_flux)
             plt.plot(z, -atmosphere.P*self.profiles_dict['T_z_IVP'])
-            plt.plot(z, self.profiles_dict['enth_flux_IVP'])
+            plt.plot(z, self.profiles_dict['enth_flux_IVP']*line/tot_flux)
+            plt.plot(z, line)
             plt.savefig('{}/fluxes_{:04d}.png'.format(self.plot_dir, self.plot_count))
             plt.close()
             for fd in self.FIELDS.keys():
@@ -444,30 +530,12 @@ class BoussinesqBVPSolver(BVPSolverBase):
         self.plot_count += 1
 
 
-        # Adjust the enthalpy flux so that it on average carries all atmospheric flux in the bulk.
-        kappa_flux          = -atmosphere.P * self.profiles_dict['T_z_IVP']
-        tot_flux            = kappa_flux + self.profiles_dict['enth_flux_IVP']
-        mid = int(self.nz/2)
-        num_pts_mid = int(self.nz/10)
-        xs = z[mid-num_pts_mid:mid+num_pts_mid]
-        ys = self.profiles_dict['enth_flux_IVP'][mid-num_pts_mid:mid+num_pts_mid]
-        p = np.polyfit(xs, ys, 1)
-        line = p[0]*z + p[1]
-        self.profiles_dict['enth_flux_IVP']  *= tot_flux / line
+
         
         #In the simulation, adjust the velocity field by a constant value according to the mean drop in enth flux.
         vel_adjust = np.mean(tot_flux / line)
         vel_adjust_factor *= vel_adjust
 
-        #Adjust temperature forcing for the next bvp solve.
-        f = atmosphere._new_field()
-        df = atmosphere._new_field()
-        f.set_scales(self.nz/atmosphere.nz, keep_data=False)
-        f['g'] = self.profiles_dict['enth_flux_IVP'] - atmosphere.P * self.profiles_dict['T_z_IVP']
-        f.differentiate('z', out=df)
-        df.set_scales(self.nz/atmosphere.nz, keep_data=True)
-        self.profiles_dict['T_forcing'] = df['g']
-        
         #Report
         avg_change = np.mean(T1['g'])
         logger.info('avg change T1: {}'.format(avg_change))
@@ -499,18 +567,20 @@ class BoussinesqBVPSolver(BVPSolverBase):
             avg_change = 1e10
             vel_adjust_factor = 1
             first=True
-            while avg_change > 1e-9:
+            while avg_change > 1e-7:
+
+
                 atmosphere = self.atmosphere_class(dimensions=1, comm=MPI.COMM_SELF, **atmosphere_kwargs)
                 atmosphere.problem = de.NLBVP(atmosphere.domain, variables=['T1', 'T1_z','p1'], ncc_cutoff=tolerance)
 
                 #Zero out old varables to make atmospheric substitutions happy.
-                old_vars = ['u', 'w', 'u_z', 'w_z', 'dx(A)']
+                old_vars = ['u', 'w', 'dx(A)', 'Oy']
                 for sub in old_vars:
                     atmosphere.problem.substitutions[sub] = '0'
 
                 atmosphere._set_parameters(*diffusivity_args)
                 atmosphere._set_subs()
-
+ 
                 #Add time and horizontally averaged profiles from IVP to the problem as parameters
                 for k in self.FIELDS.keys():
                     f = atmosphere._new_ncc()
