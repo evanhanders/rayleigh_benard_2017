@@ -419,26 +419,49 @@ class BoussinesqBVPSolver(BVPSolverBase):
         mid = int(len(z)/2)
 
         n_pts_start = 3
-        slopes = np.zeros(len(z) - n_pts_start)
-        inters = np.zeros(len(z) - n_pts_start)
-        
-        # Fit to middle of domain
-        for i in range(len(z) - n_pts_start):
-            mid_z = z[i:n_pts_start+i]
-            mid_prof = T_profile[i:n_pts_start+i]
-            p = np.polyfit(mid_z, mid_prof, 1)
-            slopes[i] = p[0]
-            inters[i] = p[1]
-        
-        #m_slopes = np.median(slopes[:int(len(slopes)/2)])
-        m_slopes = np.mean(slopes[2*len(slopes)/5:3*len(slopes)/5])
-        print(slopes, m_slopes, np.abs((slopes/m_slopes - 1)) < 0.5)
-#        last     = np.where(np.abs((slopes/m_slopes - 1)) < 0.5)[0][-1] - mid
-        last     = np.where(np.abs(slopes) < 0.1)[0][-1] - mid
-#        print(slopes, m_slopes, np.abs((slopes/m_slopes - 1)) < 0.5, last)
 
-        xs = z[mid - last - n_pts_start: mid + n_pts_start + last]
-        ys = T_profile[mid-n_pts_start-last:mid+n_pts_start+last]
+        start_pct = 10
+        n  = int(len(z)/start_pct)
+        xs = z[mid-n:mid+n]
+        ys = T_profile[mid-n:mid+n]
+        powers = np.arange(5)
+        for i in range(len(powers)):
+            n = 1+i
+            p = np.polyfit(xs, ys, n)
+            line = np.zeros_like(xs)
+            for j in range(n+1):
+                line += p[j]*xs**(n-j)
+            powers[i] = np.sum(np.abs( (line - ys) / ys))
+
+        pow_fit = np.argmin(powers) + 1
+        p  = np.polyfit(xs, ys, pow_fit)
+        line = np.zeros_like(z)
+        for i in range(pow_fit+1):
+            line += p[i]*z**(pow_fit-i)
+
+        last = np.where(np.abs((T_profile - line)/line) < 0.1)[0][-1]
+        first = np.where(np.abs((T_profile - line)/line) < 0.1)[0][0]
+        print(first, last, T_profile, line, np.abs((T_profile - line)/line))
+
+       
+
+#        # Fit to middle of domain
+#        for i in range(len(z) - n_pts_start):
+#            mid_z = z[i:n_pts_start+i]
+#            mid_prof = T_profile[i:n_pts_start+i]
+#            p = np.polyfit(mid_z, mid_prof, 1)
+#            slopes[i] = p[0]
+#            inters[i] = p[1]
+#        
+#        #m_slopes = np.median(slopes[:int(len(slopes)/2)])
+#        m_slopes = np.mean(slopes[2*len(slopes)/5:3*len(slopes)/5])
+#        print(slopes, m_slopes, np.abs((slopes/m_slopes - 1)) < 0.5)
+##        last     = np.where(np.abs((slopes/m_slopes - 1)) < 0.5)[0][-1] - mid
+#        last     = np.where(np.abs(slopes) < 0.1)[0][-1] - mid
+##        print(slopes, m_slopes, np.abs((slopes/m_slopes - 1)) < 0.5, last)
+#
+        xs = z[first:last]
+        ys = T_profile[first:last]
         powers = np.arange(5)
         for i in range(len(powers)):
             n = 1+i
@@ -455,8 +478,8 @@ class BoussinesqBVPSolver(BVPSolverBase):
             line += p[i]*z**(pow_fit-i)
 
 
-        slopes_bot = np.zeros(mid-last-2*n_pts_start)
-        for i in range(mid - last - 2*n_pts_start):
+        slopes_bot = np.zeros(first-n_pts_start)
+        for i in range(first-n_pts_start):
             bot_z = z[:n_pts_start+i]
             bot_prof = T_profile[:n_pts_start+i]
             p = np.polyfit(bot_z, bot_prof, 1)
@@ -468,8 +491,8 @@ class BoussinesqBVPSolver(BVPSolverBase):
         fit_bot  = np.polyfit(z[:n_pts_start+last_bot], T_profile[:n_pts_start+last_bot], 1)
 
 
-        slopes_top = np.zeros(mid-last-2*n_pts_start)
-        for i in range(mid- last - 2*n_pts_start):
+        slopes_top = np.zeros(len(z) - last - n_pts_start)
+        for i in range(len(z) - last - n_pts_start):
             top_z = z[-n_pts_start-i:]
             top_prof = T_profile[-n_pts_start-i:]
             p = np.polyfit(top_z, top_prof, 1)
@@ -495,8 +518,7 @@ class BoussinesqBVPSolver(BVPSolverBase):
         plt.plot(z, line)
         plt.plot(z, z*fit_bot[0] + fit_bot[1])
         plt.plot(z, z*fit_top[0] + fit_top[1])
-        plt.plot(z[mid-n_pts_start-last:mid+n_pts_start+last],
-                                     T_profile[mid-n_pts_start-last:mid+n_pts_start+last],ls='--')
+        plt.plot(z[first:last],T_profile[first:last],ls='--', lw=2)
         plt.axvline(low_bl)
         plt.axvline(upp_bl)
         plt.ylim(np.min(T_profile), np.max(T_profile))
