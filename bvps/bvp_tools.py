@@ -10,6 +10,8 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from scipy.signal import savgol_filter
+from scipy.optimize import brentq
+from scipy.interpolate import interp1d
 
 from dedalus import public as de
 
@@ -416,177 +418,121 @@ class BoussinesqBVPSolver(BVPSolverBase):
         atmosphere.T0.set_scales(self.nz/atmosphere.nz, keep_data=True)
         T_profile = self.profiles_dict['T1_IVP'] + atmosphere.T0['g']
 
-        mid = int(len(z)/2)
-
         n_pts_start = 3
 
-        start_pct = 10
-        n  = int(len(z)/start_pct)
-        xs = z[mid-n:mid+n]
-        ys = T_profile[mid-n:mid+n]
-        powers = np.arange(5)
-        for i in range(len(powers)):
-            n = 1+i
-            p = np.polyfit(xs, ys, n)
-            line = np.zeros_like(xs)
-            for j in range(n+1):
-                line += p[j]*xs**(n-j)
-            powers[i] = np.sum(np.abs( (line - ys) / ys))
+        low_bl_prev = 0.125*atmosphere.Lz
+        upp_bl_prev = 0.875*atmosphere.Lz
 
-        pow_fit = np.argmin(powers) + 1
-        p  = np.polyfit(xs, ys, pow_fit)
-        line = np.zeros_like(z)
-        for i in range(pow_fit+1):
-            line += p[i]*z**(pow_fit-i)
+        tolerance = 1e-6
+        change = 1e10
+        while change > tolerance:
+            xs = z[(z>2*low_bl_prev)*(z<atmosphere.Lz-2*(atmosphere.Lz - upp_bl_prev))]
+            ys = T_profile[(z>2*low_bl_prev)*(z<atmosphere.Lz - 2*(atmosphere.Lz - upp_bl_prev))]
+            powers = np.arange(5)
+            for i in range(len(powers)):
+                n = 1+i
+                p = np.polyfit(xs, ys, n)
+                line = np.zeros_like(xs)
+                for j in range(n+1):
+                    line += p[j]*xs**(n-j)
+                powers[i] = np.sum(np.abs( (line - ys) / ys))
 
-        last = np.where(np.abs((T_profile - line)/line) < 0.1)[0][-1]
-        first = np.where(np.abs((T_profile - line)/line) < 0.1)[0][0]
-        print(first, last, T_profile, line, np.abs((T_profile - line)/line))
+            pow_fit = np.argmin(powers) + 1
+            p  = np.polyfit(xs, ys, pow_fit)
+            line = np.zeros_like(z)
+            for i in range(pow_fit+1):
+                line += p[i]*z**(pow_fit-i)
 
-       
-
-#        # Fit to middle of domain
-#        for i in range(len(z) - n_pts_start):
-#            mid_z = z[i:n_pts_start+i]
-#            mid_prof = T_profile[i:n_pts_start+i]
-#            p = np.polyfit(mid_z, mid_prof, 1)
-#            slopes[i] = p[0]
-#            inters[i] = p[1]
-#        
-#        #m_slopes = np.median(slopes[:int(len(slopes)/2)])
-#        m_slopes = np.mean(slopes[2*len(slopes)/5:3*len(slopes)/5])
-#        print(slopes, m_slopes, np.abs((slopes/m_slopes - 1)) < 0.5)
-##        last     = np.where(np.abs((slopes/m_slopes - 1)) < 0.5)[0][-1] - mid
-#        last     = np.where(np.abs(slopes) < 0.1)[0][-1] - mid
-##        print(slopes, m_slopes, np.abs((slopes/m_slopes - 1)) < 0.5, last)
+#            print(np.abs((T_profile - line) / line))
+#            last = np.where(np.abs((T_profile - line)/line) < 0.1)[0][-1]
+#            first = np.where(np.abs((T_profile - line)/line) < 0.1)[0][0]
+#            print(first, last, T_profile, line, np.abs((T_profile - line)/line))
 #
-        xs = z[first:last]
-        ys = T_profile[first:last]
-        powers = np.arange(5)
-        for i in range(len(powers)):
-            n = 1+i
-            p = np.polyfit(xs, ys, n)
-            line = np.zeros_like(xs)
-            for j in range(n+1):
-                line += p[j]*xs**(n-j)
-            powers[i] = np.sum(np.abs( (line - ys) / ys))
-
-        pow_fit = np.argmin(powers) + 1
-        p  = np.polyfit(xs, ys, pow_fit)
-        line = np.zeros_like(z)
-        for i in range(pow_fit+1):
-            line += p[i]*z**(pow_fit-i)
-
-
-        slopes_bot = np.zeros(first-n_pts_start)
-        for i in range(first-n_pts_start):
-            bot_z = z[:n_pts_start+i]
-            bot_prof = T_profile[:n_pts_start+i]
-            p = np.polyfit(bot_z, bot_prof, 1)
-            slopes_bot[i] = p[0]
-        
-        m_slopes = np.mean(slopes_bot[:len(slopes_bot)/5])
-        print(slopes_bot, m_slopes)
-        last_bot     = np.where(np.abs((slopes_bot/m_slopes - 1)) < 0.05)[0][-1]
-        fit_bot  = np.polyfit(z[:n_pts_start+last_bot], T_profile[:n_pts_start+last_bot], 1)
+#           
+#            xs = z[first:last]
+#            ys = T_profile[first:last]
+#            powers = np.arange(5)
+#            for i in range(len(powers)):
+#                n = 1+i
+#                p = np.polyfit(xs, ys, n)
+#                line = np.zeros_like(xs)
+#                for j in range(n+1):
+#                    line += p[j]*xs**(n-j)
+#                powers[i] = np.sum(np.abs( (line - ys) / ys))
+#
+#            pow_fit = np.argmin(powers) + 1
+#            p  = np.polyfit(xs, ys, pow_fit)
+#            line = np.zeros_like(z)
+#            for i in range(pow_fit+1):
+#                line += p[i]*z**(pow_fit-i)
 
 
-        slopes_top = np.zeros(len(z) - last - n_pts_start)
-        for i in range(len(z) - last - n_pts_start):
-            top_z = z[-n_pts_start-i:]
-            top_prof = T_profile[-n_pts_start-i:]
-            p = np.polyfit(top_z, top_prof, 1)
-            slopes_top[i] = p[0]
-        
-        m_slopes = np.mean(slopes_top[:len(slopes_top)/5])
-        last_top     = np.where(np.abs((slopes_top/m_slopes - 1)) < 0.05)[0][-1]
-        fit_top  = np.polyfit(z[-n_pts_start-last_top:], T_profile[-n_pts_start-last_top:], 1)
+            n_max_bot = len(z[z<=low_bl_prev]) - n_pts_start
+            slopes_bot = np.zeros(n_max_bot)
+            for i in range(n_max_bot):
+                bot_z = z[:n_pts_start+i]
+                bot_prof = T_profile[:n_pts_start+i]
+                p = np.polyfit(bot_z, bot_prof, 1)
+                slopes_bot[i] = p[0]
+            
+            m_slopes = np.mean(slopes_bot[:len(slopes_bot)/2])
+            last_bot     = np.where(np.abs((slopes_bot/m_slopes - 1)) < 0.05)[0][-1]
+            fit_bot  = np.polyfit(z[:n_pts_start+last_bot], T_profile[:n_pts_start+last_bot], 1)
 
-        # Calculate boundary layer thicknesses
-#        low_bl = (fit_bot[1] - fit_mid[1])/(fit_mid[0] - fit_bot[0])
-#        upp_bl = (fit_top[1] - fit_mid[1])/(fit_mid[0] - fit_top[0])
+            n_max_top = len(z[z>=upp_bl_prev]) - n_pts_start
+            slopes_top = np.zeros(n_max_top)
+            for i in range(n_max_top):
+                top_z = z[-n_pts_start-i:]
+                top_prof = T_profile[-n_pts_start-i:]
+                p = np.polyfit(top_z, top_prof, 1)
+                slopes_top[i] = p[0]
+            
+            m_slopes = np.mean(slopes_top[:len(slopes_top)/2])
+            last_top     = np.where(np.abs((slopes_top/m_slopes - 1)) < 0.05)[0][-1]
+            fit_top  = np.polyfit(z[-n_pts_start-last_top:], T_profile[-n_pts_start-last_top:], 1)
 
-        from scipy.optimize import brentq
-        from scipy.interpolate import interp1d
-        bot_func = interp1d(z, line - (fit_bot[0]*z + fit_bot[1]))
-        top_func = interp1d(z, line - (fit_top[0]*z + fit_top[1]))
-        low_bl = brentq(bot_func, np.min(z), 0.5*atmosphere.Lz)
-        upp_bl = brentq(top_func, 0.5*atmosphere.Lz, np.max(z))
+#            print('bot', line - (fit_bot[0]*z + fit_bot[1]))
+#            print('top', line - (fit_top[0]*z + fit_top[1]))
+#            print(low_bl_prev, upp_bl_prev)
+#            plt.plot(z, T_profile)
+#            plt.plot(z, line)
+#            plt.plot(z, z*fit_bot[0] + fit_bot[1])
+#            plt.plot(z, z*fit_top[0] + fit_top[1])
+#            plt.plot(z[(z>low_bl_prev)*(z<upp_bl_prev)],T_profile[(z>low_bl_prev)*(z<upp_bl_prev)],ls='--', lw=2)
+#            plt.axvline(low_bl_prev)
+#            plt.axvline(upp_bl_prev)
+#            plt.ylim(np.min(T_profile), np.max(T_profile))
+#            plt.xlim(np.min(z), np.max(z))
+#            plt.savefig('{}/bl_find_{:04d}.png'.format(self.plot_dir, self.plot_count))
+#            self.plot_count += 1
+#            plt.close()
+#
+
+            bot_func = interp1d(z, line - (fit_bot[0]*z + fit_bot[1]))
+            top_func = interp1d(z, line - (fit_top[0]*z + fit_top[1]))
+            low_bl = brentq(bot_func, np.min(z), 0.5*atmosphere.Lz)
+            upp_bl = brentq(top_func, 0.5*atmosphere.Lz, np.max(z))
+
+            change_low = np.abs(low_bl/low_bl_prev - 1)
+            change_upp = np.abs(upp_bl/upp_bl_prev - 1)
+            change = 0.5*(change_low + change_upp)
+
+            low_bl_prev, upp_bl_prev = low_bl, upp_bl
+            print('bl change', change)
 
         # Make plot of boundary layer find
         plt.plot(z, T_profile)
         plt.plot(z, line)
         plt.plot(z, z*fit_bot[0] + fit_bot[1])
         plt.plot(z, z*fit_top[0] + fit_top[1])
-        plt.plot(z[first:last],T_profile[first:last],ls='--', lw=2)
+        plt.plot(z[(z>low_bl_prev)*(z<upp_bl_prev)],T_profile[(z>low_bl_prev)*(z<upp_bl_prev)],ls='--', lw=2)
         plt.axvline(low_bl)
         plt.axvline(upp_bl)
         plt.ylim(np.min(T_profile), np.max(T_profile))
         plt.xlim(np.min(z), np.max(z))
         plt.savefig('{}/bl_find_{:04d}.png'.format(self.plot_dir, self.plot_count))
         plt.close()
-
-
         return low_bl, upp_bl, np.where(z > low_bl)[0][0], np.where(z < upp_bl)[0][-1]
-
-#        bottom = z[0]
-#        top    = z[-1]
-#        quarter = bottom + 0.3*(top-bottom)
-#        three_quarter = bottom + 0.7*(top-bottom)
-#        xs = z[(z>=quarter)*(z<=three_quarter)]
-#        ys = self.profiles_dict['T1_z_IVP'][(z>=quarter)*(z<=three_quarter)]
-#
-#        mean = np.mean(ys)
-#        stdev = np.std(ys)
-#
-#        err = np.abs(self.profiles_dict['T1_z_IVP'] - mean)
-#
-#        # Find which points are in / out of boundary layers
-#        lower = z[:int(len(z)/2)]
-#        lower_T = self.profiles_dict['T1_IVP'][:int(len(z)/2)]
-#        lower_e = err[:int(len(z)/2)]
-#        upper = z[int(len(z)/2):]
-#        upper_T = self.profiles_dict['T1_IVP'][int(len(z)/2):]
-#        upper_e = err[int(len(z)/2):]
-#
-#        diff_bad = 3*stdev
-#
-#        lower_z = lower[lower_e > diff_bad]
-#        lower_y = lower_T[lower_e > diff_bad]
-#        upper_z = upper[upper_e > diff_bad]
-#        upper_y = upper_T[upper_e > diff_bad]
-#        
-#        mid_lower_z = lower[lower_e < diff_bad]
-#        mid_lower_y = lower_T[lower_e < diff_bad]
-#        mid_upper_z = upper[upper_e < diff_bad]
-#        mid_upper_y = upper_T[upper_e < diff_bad]
-#
-#        # Fit lines
-#        line_low = np.polyfit(lower_z, lower_y, 1)
-#        line_upp = np.polyfit(upper_z, upper_y, 1)
-#        line_mid_low = np.polyfit(mid_lower_z, mid_lower_y, 1)
-#        line_mid_upp = np.polyfit(mid_upper_z, mid_upper_y, 1)
-#
-#        # Calculate boundary layer thicknesses
-#        low_bl = (line_low[1] - line_mid_low[1])/(line_mid_low[0] - line_low[0])
-#        upp_bl = (line_upp[1] - line_mid_upp[1])/(line_mid_upp[0] - line_upp[0])
-#
-#        # Make plot of boundary layer find
-#        plt.plot(z, self.profiles_dict['T1_IVP'])
-#        plt.plot(lower, lower*line_mid_low[0] + line_mid_low[1])
-#        plt.plot(upper, upper*line_mid_upp[0] + line_mid_upp[1])
-#        plt.plot(z, z*line_low[0] + line_low[1])
-#        plt.plot(z, z*line_upp[0] + line_upp[1])
-#        plt.axvline(low_bl)
-#        plt.axvline(upp_bl)
-#        plt.ylim(np.min(self.profiles_dict['T1_IVP']), np.max(self.profiles_dict['T1_IVP']))
-#        plt.xlim(np.min(z), np.max(z))
-#        plt.savefig('{}/bl_find_{:04d}.png'.format(self.plot_dir, self.plot_count))
-#        plt.close()
-#
-#        return low_bl, upp_bl, np.where(z > low_bl)[0][0], np.where(z < upp_bl)[0][-1]
-
-        
 
     def _update_profiles_dict(self, solver, atmosphere, vel_adjust_factor, first=False):
         #Get solver states
@@ -643,10 +589,7 @@ class BoussinesqBVPSolver(BVPSolverBase):
         sigma = bl_thick
         self.profiles_dict['enth_flux_IVP'] = (1 - np.exp(-z**2 / 2 / (sigma)**2) - np.exp(-(z-atmosphere.Lz)**2 / 2 / (sigma)**2) )
 
-#        self.profiles_dict['enth_flux_IVP'] = savgol_filter(self.profiles_dict['enth_flux_IVP'], 11, 3)
         self.profiles_dict['enth_flux_IVP'] *= tot_flux
-
-#        self.profiles_dict['enth_flux_IVP'][self.profiles_dict['enth_flux_IVP'] > tot_flux] = tot_flux[self.profiles_dict['enth_flux_IVP'] > tot_flux]
 
         if not isinstance(self.plot_dir, type(None)):
             plt.plot(z, init_kappa_flux + init_enth_flux)
