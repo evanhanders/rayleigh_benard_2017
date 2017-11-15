@@ -406,67 +406,73 @@ class BoussinesqBVPSolver(BVPSolverBase):
     def _set_BCs(self, atmosphere, bc_kwargs):
         """ Sets standard thermal BCs, and also enforces the m = 0 pressure constraint """
         atmosphere.dirichlet_set = []
-        atmosphere.set_thermal_BC(**bc_kwargs)
+        if bc_kwargs['fixed_flux']:
+            logger.info("Thermal BC: fixed_flux (BVP form)")
+            atmosphere.problem.add_bc( "left(T1_z) = 0")
+            atmosphere.problem.add_bc( "left(T1) + right(T1) = 0")
+            atmosphere.dirichlet_set.append('T1')
+            atmosphere.dirichlet_set.append('T1_z')
+        else:
+            atmosphere.set_thermal_BC(**bc_kwargs)
         atmosphere.problem.add_bc('right(p1) = 0')
         for key in atmosphere.dirichlet_set:
             atmosphere.problem.meta[key]['z']['dirichlet'] = True
 
     def _find_BL_thick(self, z, atmosphere):
         """
-        Find boundary layer thickness of top and bottom temperature profiles
+        Iteratively solve for the size of the boundary layers at the top and bottom
+        of the atmosphere.  Return the z locations of those boundary layers, as well
+        as their indices.
         """
+
+        #Search for BLs in temperature profile.
         atmosphere.T0.set_scales(self.nz/atmosphere.nz, keep_data=True)
         T_profile = self.profiles_dict['T1_IVP'] + atmosphere.T0['g']
 
+        #In boundary layers, fit at least 3 points to the lines
         n_pts_start = 3
 
+        #Start with an initial guess of BL for properly fitting the central part of the domain.
         low_bl_prev = 0.125*atmosphere.Lz
         upp_bl_prev = 0.875*atmosphere.Lz
 
+
         tolerance = 1e-6
         change = 1e10
+        count = 0
         while change > tolerance:
+            #fit a polynomial to the atmosphere from 2*bottom BL thickness - 2*top bl thickness
+            #   This keeps the polynomial from being affected by the squishiness of the boundary layer
             xs = z[(z>2*low_bl_prev)*(z<atmosphere.Lz-2*(atmosphere.Lz - upp_bl_prev))]
             ys = T_profile[(z>2*low_bl_prev)*(z<atmosphere.Lz - 2*(atmosphere.Lz - upp_bl_prev))]
+            xs_full = z[(z>low_bl_prev)*(z<upp_bl_prev)]
+            ys_full = T_profile[(z>low_bl_prev)*(z< upp_bl_prev)]
+
+            #Fit polynomials of order 1 - 5
             powers = np.arange(5)
             for i in range(len(powers)):
                 n = 1+i
                 p = np.polyfit(xs, ys, n)
-                line = np.zeros_like(xs)
+                line = np.zeros_like(xs_full)
                 for j in range(n+1):
-                    line += p[j]*xs**(n-j)
-                powers[i] = np.sum(np.abs( (line - ys) / ys))
+                    line += p[j]*xs_full**(n-j)
+                #See how well this fits the full bulk (the area between the BLs)
+                powers[i] = np.sum(np.abs( (line - ys_full) / ys_full))
 
+            #Whichever polynomial was the best fit is the one we use.
             pow_fit = np.argmin(powers) + 1
-            p  = np.polyfit(xs, ys, pow_fit)
-            line = np.zeros_like(z)
+            p_poly  = np.polyfit(xs, ys, pow_fit)
+            p_line  = np.polyfit(xs, ys, 1)
+
+            #Create an array containing the polynomial and also a best-fit line.
+            line_fit = np.zeros_like(z)
+            poly_fit = np.zeros_like(z)
             for i in range(pow_fit+1):
-                line += p[i]*z**(pow_fit-i)
+                poly_fit += p_poly[i]*z**(pow_fit-i)
+            line_fit = p_line[0]*z + p_line[1]
 
-#            print(np.abs((T_profile - line) / line))
-#            last = np.where(np.abs((T_profile - line)/line) < 0.1)[0][-1]
-#            first = np.where(np.abs((T_profile - line)/line) < 0.1)[0][0]
-#            print(first, last, T_profile, line, np.abs((T_profile - line)/line))
-#
-#           
-#            xs = z[first:last]
-#            ys = T_profile[first:last]
-#            powers = np.arange(5)
-#            for i in range(len(powers)):
-#                n = 1+i
-#                p = np.polyfit(xs, ys, n)
-#                line = np.zeros_like(xs)
-#                for j in range(n+1):
-#                    line += p[j]*xs**(n-j)
-#                powers[i] = np.sum(np.abs( (line - ys) / ys))
-#
-#            pow_fit = np.argmin(powers) + 1
-#            p  = np.polyfit(xs, ys, pow_fit)
-#            line = np.zeros_like(z)
-#            for i in range(pow_fit+1):
-#                line += p[i]*z**(pow_fit-i)
-
-
+            #Find the bottom boundary layer thickness
+            # fit lines from the boundary heading towards the bulk, using an increasing number of points
             n_max_bot = len(z[z<=low_bl_prev]) - n_pts_start
             slopes_bot = np.zeros(n_max_bot)
             for i in range(n_max_bot):
@@ -475,10 +481,13 @@ class BoussinesqBVPSolver(BVPSolverBase):
                 p = np.polyfit(bot_z, bot_prof, 1)
                 slopes_bot[i] = p[0]
             
+            #Get rid of the upper half of the points (probably towards edge of BL)
+            # Then, only use points that get us within 5% of the mean BL slope value.
             m_slopes = np.mean(slopes_bot[:len(slopes_bot)/2])
             last_bot     = np.where(np.abs((slopes_bot/m_slopes - 1)) < 0.05)[0][-1]
             fit_bot  = np.polyfit(z[:n_pts_start+last_bot], T_profile[:n_pts_start+last_bot], 1)
 
+            #Same process, upper BL.
             n_max_top = len(z[z>=upp_bl_prev]) - n_pts_start
             slopes_top = np.zeros(n_max_top)
             for i in range(n_max_top):
@@ -491,38 +500,44 @@ class BoussinesqBVPSolver(BVPSolverBase):
             last_top     = np.where(np.abs((slopes_top/m_slopes - 1)) < 0.05)[0][-1]
             fit_top  = np.polyfit(z[-n_pts_start-last_top:], T_profile[-n_pts_start-last_top:], 1)
 
-#            print('bot', line - (fit_bot[0]*z + fit_bot[1]))
-#            print('top', line - (fit_top[0]*z + fit_top[1]))
-#            print(low_bl_prev, upp_bl_prev)
-#            plt.plot(z, T_profile)
-#            plt.plot(z, line)
-#            plt.plot(z, z*fit_bot[0] + fit_bot[1])
-#            plt.plot(z, z*fit_top[0] + fit_top[1])
-#            plt.plot(z[(z>low_bl_prev)*(z<upp_bl_prev)],T_profile[(z>low_bl_prev)*(z<upp_bl_prev)],ls='--', lw=2)
-#            plt.axvline(low_bl_prev)
-#            plt.axvline(upp_bl_prev)
-#            plt.ylim(np.min(T_profile), np.max(T_profile))
-#            plt.xlim(np.min(z), np.max(z))
-#            plt.savefig('{}/bl_find_{:04d}.png'.format(self.plot_dir, self.plot_count))
-#            self.plot_count += 1
-#            plt.close()
-#
+            #Plot up fitting process.
+            plt.plot(z, T_profile)
+            plt.plot(z, line_fit)
+            plt.plot(z, poly_fit)
+            plt.plot(z, z*fit_bot[0] + fit_bot[1])
+            plt.plot(z, z*fit_top[0] + fit_top[1])
+            plt.plot(z[(z>low_bl_prev)*(z<upp_bl_prev)],T_profile[(z>low_bl_prev)*(z<upp_bl_prev)],ls='--', lw=2)
+            plt.axvline(low_bl_prev)
+            plt.axvline(upp_bl_prev)
+            plt.ylim(np.min(T_profile), np.max(T_profile))
+            plt.xlim(np.min(z), np.max(z))
+            plt.savefig('{}/bl_find_{:04d}-{:02d}.png'.format(self.plot_dir, self.plot_count, count))
+            count += 1
+            plt.close()
 
-            bot_func = interp1d(z, line - (fit_bot[0]*z + fit_bot[1]))
-            top_func = interp1d(z, line - (fit_top[0]*z + fit_top[1]))
+            #Find where bulk polynomial intersects boundary layer line.
+            # If the two never cross each other, use the bulk best fit line.
+            bot_func = interp1d(z, poly_fit - (fit_bot[0]*z + fit_bot[1]))
+            top_func = interp1d(z, poly_fit - (fit_top[0]*z + fit_top[1]))
+            if bot_func(np.min(z))/bot_func(0.5*atmosphere.Lz) > 0:
+                bot_func = interp1d(z, line_fit - (fit_bot[0]*z + fit_bot[1]))
+            if top_func(0.5*atmosphere.Lz)/top_func(np.max(z)) > 0:
+                top_func = interp1d(z, line_fit - (fit_top[0]*z + fit_top[1]))
+                
             low_bl = brentq(bot_func, np.min(z), 0.5*atmosphere.Lz)
             upp_bl = brentq(top_func, 0.5*atmosphere.Lz, np.max(z))
 
+            #Update variables to see if we've converged on the BL value.
             change_low = np.abs(low_bl/low_bl_prev - 1)
             change_upp = np.abs(upp_bl/upp_bl_prev - 1)
             change = 0.5*(change_low + change_upp)
 
             low_bl_prev, upp_bl_prev = low_bl, upp_bl
-            print('bl change', change)
 
-        # Make plot of boundary layer find
+        # Make plot of boundary layer find final product
         plt.plot(z, T_profile)
-        plt.plot(z, line)
+        plt.plot(z, line_fit)
+        plt.plot(z, poly_fit)
         plt.plot(z, z*fit_bot[0] + fit_bot[1])
         plt.plot(z, z*fit_top[0] + fit_top[1])
         plt.plot(z[(z>low_bl_prev)*(z<upp_bl_prev)],T_profile[(z>low_bl_prev)*(z<upp_bl_prev)],ls='--', lw=2)
@@ -530,72 +545,61 @@ class BoussinesqBVPSolver(BVPSolverBase):
         plt.axvline(upp_bl)
         plt.ylim(np.min(T_profile), np.max(T_profile))
         plt.xlim(np.min(z), np.max(z))
-        plt.savefig('{}/bl_find_{:04d}.png'.format(self.plot_dir, self.plot_count))
+        plt.savefig('{}/bl_find_final_{:04d}.png'.format(self.plot_dir, self.plot_count))
         plt.close()
+
         return low_bl, upp_bl, np.where(z > low_bl)[0][0], np.where(z < upp_bl)[0][-1]
 
-    def _update_profiles_dict(self, solver, atmosphere, vel_adjust_factor, first=False):
-        #Get solver states
-        T1 = solver.state['T1']
-        T1_z = solver.state['T1_z']
-        P1   = solver.state['p1']
+    def _update_profiles_dict(self, bc_kwargs, atmosphere, vel_adjust_factor):
+        """
+        Update the enthalpy flux profile such that the BVP solve gets us the right answer.
+        """
 
-
+        #Get the atmospheric z-points (on the right size grid)
         z = atmosphere._new_field()
         z['g'] = atmosphere.z
         z.set_scales(self.nz/atmosphere.nz, keep_data=True)
         z = z['g']
 
+        #Find the boundary layers.  This is RB, so get the mean boundary layer thickness (symmetry assumed)
         bl_bot, bl_top, bl_bot_ind, bl_top_ind = self._find_BL_thick(z, atmosphere)
-
         bl_thick = (bl_bot + atmosphere.Lz - bl_top)/2
 
-        # Update temperature fields for next solve. May need to add some logic here if nx == nz.
+        #Keep track of initial flux profiles, then make a new enthalpy flux profile
         init_kappa_flux = -atmosphere.P * self.profiles_dict['T_z_IVP']
         init_enth_flux = 1*self.profiles_dict['enth_flux_IVP']
-        T1_z.set_scales(self.nz/atmosphere.nz, keep_data=True)
-        self.profiles_dict['T_z_IVP'] += T1_z['g']
 
-        # Adjust the enthalpy flux so that it on average carries all atmospheric flux in the bulk.
-        kappa_flux          = -atmosphere.P * self.profiles_dict['T_z_IVP']
-        tot_flux            = kappa_flux + self.profiles_dict['enth_flux_IVP']
-        xs = z[(z>bl_bot)*(z<bl_top)]
-        ys = self.profiles_dict['enth_flux_IVP'][(z>bl_bot)*(z<bl_top)]
-
-        powers = np.arange(1)
-        for i in range(len(powers)):
-            n = 1+i
-            p = np.polyfit(xs, ys, n)
-            line = np.zeros_like(xs)
-            for j in range(n+1):
-                line += p[j]*xs**(n-j)
-            powers[i] = np.sum(np.abs( (line - ys) / ys))
-        pow_fit = np.argmin(powers) + 1
-        p = np.polyfit(xs, ys, pow_fit)
-        line = np.zeros_like(z)
-        for i in range(pow_fit+1):
-            line += p[i]*z**(pow_fit-i)
-#        self.profiles_dict['enth_flux_IVP']  /= line
-#        plt.plot(z, self.profiles_dict['enth_flux_IVP'], label='post_detrend')
-#        self.profiles_dict['enth_flux_IVP'][:bl_bot_ind] /= np.max(self.profiles_dict['enth_flux_IVP'][:bl_bot_ind])
-#        plt.plot(z, self.profiles_dict['enth_flux_IVP'], label='post_left')
-#        self.profiles_dict['enth_flux_IVP'][bl_top_ind:] /= np.max(self.profiles_dict['enth_flux_IVP'][bl_top_ind:])
-#        plt.plot(z, self.profiles_dict['enth_flux_IVP'], label='post_right')
-#        self.profiles_dict['enth_flux_IVP'][bl_bot_ind:bl_top_ind] = 1
-#        plt.plot(z, self.profiles_dict['enth_flux_IVP'], label='post_mid')
-#        plt.legend(loc='best')
-#        plt.savefig('{}/enth_flux_detrend_{}.png'.format(self.plot_dir, self.plot_count))
-#        plt.close()
+        #Enthalpy flux carries everything in the bulk, and nothing at the boundaries.  Assume gaussian boundary shapes.
         sigma = bl_thick
         self.profiles_dict['enth_flux_IVP'] = (1 - np.exp(-z**2 / 2 / (sigma)**2) - np.exp(-(z-atmosphere.Lz)**2 / 2 / (sigma)**2) )
 
-        self.profiles_dict['enth_flux_IVP'] *= tot_flux
+        if bc_kwargs['fixed_temperature']:
+            #Fixed T case: amount of flux can be derived from shape of enthalpy flux and from boundary layer thickness.
+            flux = atmosphere._new_field()
+            flux_int = atmosphere._new_field()
+            flux.set_scales(self.nz/atmosphere.nz, keep_data=False)
+            flux['g'] = self.profiles_dict['enth_flux_IVP']
+            flux.integrate('z', out=flux_int)
+            atmosphere.T0_z.set_scales(self.nz/atmosphere.nz, keep_data=True)
+            delta_T = -np.mean(atmosphere.T0.interpolate(z=atmosphere.Lz)['g'] - atmosphere.T0.interpolate(z=0)['g'])
+            flux_through_system = (atmosphere.P / atmosphere.Lz)*(delta_T + np.mean(flux_int['g']))
+        elif bc_kwargs['mixed_flux_temperature']:
+            #If there's even 1 flux boundary condition, then initial flux = final flux.
+            atmosphere.T0_z.set_scales(self.nz/atmosphere.nz, keep_data=True)
+            flux_through_system = -atmosphere.P * atmosphere.T0_z['g']
+        elif bc_kwargs['fixed_flux']:
+            atmosphere.T0_z.set_scales(self.nz/atmosphere.nz, keep_data=True)
+            flux_through_system = -atmosphere.P * atmosphere.T0_z['g']
 
+        #Scale flux appropriately.
+        self.profiles_dict['enth_flux_IVP'] *= flux_through_system
+
+        #Make some plots
         if not isinstance(self.plot_dir, type(None)):
             plt.plot(z, init_kappa_flux + init_enth_flux)
             plt.plot(z, init_kappa_flux)
             plt.plot(z, init_enth_flux)
-            plt.plot(z, self.profiles_dict['enth_flux_IVP'])
+            plt.plot(z, self.profiles_dict['enth_flux_IVP'], lw=2, ls='--')
             plt.axvline(bl_bot)
             plt.axvline(bl_top)
             plt.savefig('{}/fluxes_{:04d}.png'.format(self.plot_dir, self.plot_count))
@@ -605,23 +609,16 @@ class BoussinesqBVPSolver(BVPSolverBase):
                     plt.plot(z, self.profiles_dict[fd])
                     plt.savefig('{}/{}_{:04d}.png'.format(self.plot_dir, fd, self.plot_count))
                     plt.close()
-
         self.plot_count += 1
 
-
-
-        
         #In the simulation, adjust the velocity field by a constant value according to the mean drop in enth flux.
-#        print(self.profiles_dict['enth_flux_IVP'] / init_enth_flux)
-        vel_adjust = np.median(self.profiles_dict['enth_flux_IVP'] / init_enth_flux)
+        #print((self.profiles_dict['enth_flux_IVP'] / init_enth_flux)[int(self.nz*0.1):int(self.nz*0.9)])
+        vel_adjust = np.mean((self.profiles_dict['enth_flux_IVP'] / init_enth_flux)[int(self.nz*0.1):int(self.nz*0.9)])
         vel_adjust_factor *= vel_adjust
 
         #Report
-        avg_change = np.mean(T1['g'])
-        logger.info('avg change T1: {}'.format(avg_change))
         logger.info('vel_adj factor: {}'.format(vel_adjust))
-
-        return vel_adjust_factor, np.mean(np.abs(T1['g']))
+        return vel_adjust_factor
 
 
 
@@ -644,70 +641,63 @@ class BoussinesqBVPSolver(BVPSolverBase):
 
         # No need to waste processor power on multiple bvps, only do it on one
         if self.rank == 0:
-            avg_change = 1e10
             vel_adjust_factor = 1
-            first=True
-            while avg_change > 1e-7:
+            atmosphere = self.atmosphere_class(dimensions=1, comm=MPI.COMM_SELF, **atmosphere_kwargs)
+            atmosphere.problem = de.NLBVP(atmosphere.domain, variables=['T1', 'T1_z','p1'], ncc_cutoff=tolerance)
+
+            #Zero out old varables to make atmospheric substitutions happy.
+            old_vars = ['u', 'w', 'dx(A)', 'uz', 'wz']
+            for sub in old_vars:
+                atmosphere.problem.substitutions[sub] = '0'
+
+            atmosphere._set_parameters(*diffusivity_args)
+            atmosphere._set_subs()
+
+            # Create the appropriate enthalpy flux profile based on boundary conditions
+            vel_adjust_factor =\
+                    self._update_profiles_dict(bc_kwargs, atmosphere, vel_adjust_factor)
+
+            #Add time and horizontally averaged profiles from IVP to the problem as parameters
+            for k in self.FIELDS.keys():
+                f = atmosphere._new_ncc()
+                f.set_scales(self.nz / nz, keep_data=True) #If nz(bvp) =/= nz(ivp), this allows interaction between them
+                if len(self.profiles_dict[k].shape) == 2:
+                    f['g'] = self.profiles_dict[k].mean(axis=0)
+                else:
+                    f['g'] = self.profiles_dict[k]
+                atmosphere.problem.parameters[k] = f
+
+            self._set_eqns(atmosphere.problem)
+            self._set_BCs(atmosphere, bc_kwargs)
+
+            # Solve the BVP
+            solver = atmosphere.problem.build_solver()
+
+            pert = solver.perturbations.data
+            pert.fill(1+tolerance)
+            while np.sum(np.abs(pert)) > tolerance:
+                solver.newton_iteration()
+                logger.info('Perturbation norm: {}'.format(np.sum(np.abs(pert))))
 
 
-                atmosphere = self.atmosphere_class(dimensions=1, comm=MPI.COMM_SELF, **atmosphere_kwargs)
-                atmosphere.problem = de.NLBVP(atmosphere.domain, variables=['T1', 'T1_z','p1'], ncc_cutoff=tolerance)
+            T1 = solver.state['T1']
+            T1_z = solver.state['T1_z']
+            P1   = solver.state['p1']
 
-                #Zero out old varables to make atmospheric substitutions happy.
-                old_vars = ['u', 'w', 'dx(A)', 'uz', 'wz']
-                for sub in old_vars:
-                    atmosphere.problem.substitutions[sub] = '0'
+            #Appropriately adjust T1 in IVP
+            T1.set_scales(self.nz/nz, keep_data=True)
+            return_dict['T1_IVP'] += T1['g']
+            return_dict['T1_IVP'] += self.profiles_dict['T1_IVP']
 
-                atmosphere._set_parameters(*diffusivity_args)
-                atmosphere._set_subs()
- 
-                #Add time and horizontally averaged profiles from IVP to the problem as parameters
-                for k in self.FIELDS.keys():
-                    f = atmosphere._new_ncc()
-                    f.set_scales(self.nz / nz, keep_data=True) #If nz(bvp) =/= nz(ivp), this allows interaction between them
-                    if len(self.profiles_dict[k].shape) == 2:
-                        f['g'] = self.profiles_dict[k].mean(axis=0)
-                    else:
-                        f['g'] = self.profiles_dict[k]
-                    atmosphere.problem.parameters[k] = f
+            #Appropriately adjust T1_z in IVP
+            T1_z.set_scales(self.nz/nz, keep_data=True)
+            return_dict['T1_z_IVP'] += T1_z['g']
+            return_dict['T1_z_IVP'] += self.profiles_dict['T1_z_IVP']
 
-                self._set_eqns(atmosphere.problem)
-                self._set_BCs(atmosphere, bc_kwargs)
-
-                # Solve the BVP
-                solver = atmosphere.problem.build_solver()
-
-                pert = solver.perturbations.data
-                pert.fill(1+tolerance)
-                while np.sum(np.abs(pert)) > tolerance:
-                    solver.newton_iteration()
-                    logger.info('Perturbation norm: {}'.format(np.sum(np.abs(pert))))
-
-                vel_adjust_factor, avg_change =\
-                        self._update_profiles_dict(solver, atmosphere, vel_adjust_factor, first=first)
-
-                T1 = solver.state['T1']
-                T1_z = solver.state['T1_z']
-                P1   = solver.state['p1']
-
-                #Appropriately adjust T1 in IVP
-                T1.set_scales(self.nz/nz, keep_data=True)
-                return_dict['T1_IVP'] += T1['g']
-
-                #Appropriately adjust T1_z in IVP
-                T1_z.set_scales(self.nz/nz, keep_data=True)
-                return_dict['T1_z_IVP'] += T1_z['g']
-
-                #Appropriately adjust p in IVP
-                P1.set_scales(self.nz/nz, keep_data=True)
-                return_dict['p_IVP'] += P1['g']
-                
-                if first:
-                    return_dict['T1_IVP'] += self.profiles_dict['T1_IVP']
-                    return_dict['T1_z_IVP'] += self.profiles_dict['T1_z_IVP']
-                    return_dict['p_IVP'] += self.profiles_dict['p_IVP']
-     
-                first=False
+            #Appropriately adjust p in IVP
+            P1.set_scales(self.nz/nz, keep_data=True)
+            return_dict['p_IVP'] += P1['g']
+            return_dict['p_IVP'] += self.profiles_dict['p_IVP']
         else:
             for v in self.VARS.keys():
                 return_dict[v] *= 0
