@@ -415,6 +415,7 @@ class BoussinesqBVPSolver(BVPSolverBase):
                 ('T1_IVP',              ('T1', 0)),                      
                 ('T1_std_IVP',          ('T1', 1)),                      
                 ('T1_z_IVP',            ('T1_z', 0)),                    
+                ('T1_z_std_IVP',        ('T1_z', 1)),                      
                 ('p_IVP',               ('p', 0)), 
                         ])
     VARS   = OrderedDict([  
@@ -468,27 +469,29 @@ class BoussinesqBVPSolver(BVPSolverBase):
         """
         
         T_std = 1*self.profiles_dict['T1_std_IVP']
+        Tz_std = 1*self.profiles_dict['T1_z_std_IVP']
 
         if bc_dict['fixed_temperature']:
             bot_ind = np.argmax(T_std[:int(self.nz/2)])
             top_ind = np.argmax(T_std[int(self.nz/2):]) + int(self.nz/2)
         elif bc_dict['mixed_flux_temperature']:
             top_ind = np.argmax(T_std[int(self.nz/2):]) + int(self.nz/2)
-
-            bot_T = T_std[:int(self.nz/2)]
-            bot_z = z[:int(self.nz/2)]
-            p = np.polyfit(bot_z, bot_T, 1)
-            bot_T -= p[0]*bot_z + p[1]
-            bot_ind = np.argmax(bot_T)
+            bot_ind = np.argmax(Tz_std[:int(self.nz/2)])
+#                
+#            bot_T = T_std[:int(self.nz/2)]
+#            bot_z = z[:int(self.nz/2)]
+#            p = np.polyfit(bot_z, bot_T, 1)
+#            bot_T -= p[0]*bot_z + p[1]
+#            bot_ind = np.argmax(bot_T)
         print(z[bot_ind], z[top_ind], bot_ind, top_ind)
-            
-        plt.plot(z, T_std)
-        try:
-            plt.plot(bot_z, bot_T)
-        except:
-            print('nope')
-        plt.savefig('bl_find.png')
-        plt.close()
+#            
+#        plt.plot(z, T_std)
+#        try:
+#            plt.plot(bot_z, bot_T)
+#        except:
+#            print('nope')
+#        plt.savefig('bl_find.png')
+#        plt.close()
 
         return z[bot_ind], z[top_ind], bot_ind, top_ind
 

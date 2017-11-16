@@ -129,10 +129,7 @@ def Rayleigh_Benard(Rayleigh=1e6, Prandtl=1, nz=64, nx=None, aspect=4,
 
     # Build solver
     ts = de.timesteppers.RK443
-    if Rayleigh > 1e8:
-        cfl_safety = 0.8
-    else:
-        cfl_safety = 1
+    cfl_safety = 0.8
 
     solver = equations.problem.build_solver(ts)
     logger.info('Solver built')
