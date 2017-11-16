@@ -155,34 +155,28 @@ class BVPSolverBase:
                 
         if self.rank == 0:
             self.profiles_dict = OrderedDict()
-#            self.profiles_std_dict = OrderedDict()
             self.profiles_dict_last, self.profiles_dict_curr = OrderedDict(), OrderedDict()
             for fd, info in self.FIELDS.items():
                 if info[1] == 0 or info[1] == 1:    
                     self.profiles_dict[fd]      = np.zeros(nz)
-#                    self.profiles_std_dict[fd]  = np.zeros(nz)
                     self.profiles_dict_last[fd] = np.zeros(nz)
                     self.profiles_dict_curr[fd] = np.zeros(nz)
                 else:   
                     self.profiles_dict[fd]      = np.zeros((nx,nz))
-#                    self.profiles_std_dict[fd]      = np.zeros((nx,nz))
                     self.profiles_dict_last[fd] = np.zeros((nx,nz))
                     self.profiles_dict_curr[fd] = np.zeros((nx,nz))
 
         # Set up a dictionary of partial profiles to track averages locally so we
         # don't have to communicate each timestep.
         self.partial_prof_dict = OrderedDict()
-#        self.partial_std_dict = OrderedDict()
         self.current_local_avg = OrderedDict()
         self.current_local_l2  = OrderedDict()
         for fd, info in self.FIELDS.items():
             if info[1] == 0 or info[1] == 1 or info[1] == 2:
                 self.partial_prof_dict[fd]  = np.zeros(self.n_per_proc)
-#                self.partial_std_dict[fd]  = np.zeros(self.n_per_proc)
                 self.current_local_avg[fd]  = np.zeros(self.n_per_proc)
             else:
                 self.partial_prof_dict[fd]  = np.zeros((nx, self.n_per_proc))
-#                self.partial_std_dict[fd]  = np.zeros((nx, self.n_per_proc))
                 self.current_local_avg[fd]  = np.zeros((nx, self.n_per_proc))
             self.current_local_l2[fd] = 0
 
@@ -214,9 +208,6 @@ class BVPSolverBase:
             avg_type        - If 0, horiz avg.  If 1, full 2D field.
         """
         if avg_type == 0:
-#            avg = self.partial_prof_dict[prof_name]/self.avg_time_elapsed
-#            self.partial_std_dict[prof_name] += \
-#                        (self.flow.properties['{}'.format(prof_name)]['g'][0,:] - avg)**2
             self.partial_prof_dict[prof_name] += \
                         dt*self.flow.properties['{}'.format(prof_name)]['g'][0,:]
         elif avg_type == 1:
@@ -226,12 +217,8 @@ class BVPSolverBase:
             self.partial_prof_dict[prof_name] += \
                         dt*np.sum((self.flow.properties['{}'.format(prof_name)]['g'] - np.mean(self.flow.properties['{}'.format(prof_name)]['g'], axis=0))**2, axis=0)
         elif avg_type == 3:
-#            avg = self.partial_prof_dict[prof_name]/self.avg_time_elapsed
-#            self.partial_std_dict[prof_name] += \
-#                        (self.flow.properties['{}'.format(prof_name)]['g'] - avg)**2
             self.partial_prof_dict[prof_name] += \
                         dt*self.flow.properties['{}'.format(prof_name)]['g']
-
 
     def _update_profiles_dict(self, *args, **kwargs):
         pass
@@ -260,26 +247,11 @@ class BVPSolverBase:
 
         profile = glob
         return profile
-#
-#        if avg_type == 0 or avg_type == 1:
-#            local = np.zeros(self.nz)
-#            glob  = np.zeros(self.nz)
-#            local[self.n_per_proc*self.rank:self.n_per_proc*(self.rank+1)] = \
-#                        self.partial_std_dict[prof_name]
-#        elif avg_type == 2:
-#            local = np.zeros((self.nx,self.nz))
-#            glob  = np.zeros((self.nx,self.nz))
-#            local[:,self.n_per_proc*self.rank:self.n_per_proc*(self.rank+1)] = \
-#                        self.partial_std_dict[prof_name]
-#        self.comm.Allreduce(local, glob, op=MPI.SUM)
-#
-#        std = glob
-#        return profile, std
 
     def update_avgs(self, dt, min_Re = 1):
         """
         If proper conditions are met, this function adds the time-weighted vertical profile
-        of all profiles in FIELDS to the appropprof_nameate arrays which are tracking classes. The
+        of all profiles in FIELDS to the appropriate arrays which are tracking classes. The
         size of the timestep is also recorded.
 
         The averages taken by this class are time-weighted averages of horizontal averages, such
@@ -353,8 +325,6 @@ class BVPSolverBase:
                 with h5py.File(file_name, 'w') as f:
                     for k, item in self.profiles_dict.items():
                         f[k] = item
-#                    for k, item in self.profiles_std_dict.items():
-#                        f['{}_std'.format(k)] = item
                     f['z'] = global_z
             self.files_saved += 1
                     
@@ -397,13 +367,11 @@ class BVPSolverBase:
         for fd, item in self.FIELDS.items():
             defn, avg_type = item
             curr_profile = self.get_full_profile(fd, avg_type=avg_type)
-#            curr_profile, curr_std = self.get_full_profile(fd, avg_type=avg_type)
             if self.rank == 0:
                 if item[1] == 0 or item[1] == 3:
                     self.profiles_dict[fd] = curr_profile/self.avg_time_elapsed
                 else:
                     self.profiles_dict[fd] = np.sqrt(curr_profile/self.avg_time_elapsed)
-#                self.profiles_std_dict[fd] = np.sqrt(curr_std)
                 self.profiles_dict_curr[fd] = 1*self.profiles_dict[fd]
         self._save_file()
 
@@ -497,21 +465,7 @@ class BoussinesqBVPSolver(BVPSolverBase):
         elif bc_dict['fixed_flux']:
             top_ind = np.argmax(Tz_std[int(self.nz/2):]) + int(self.nz/2)
             bot_ind = np.argmax(Tz_std[:int(self.nz/2)])
-#                
-#            bot_T = T_std[:int(self.nz/2)]
-#            bot_z = z[:int(self.nz/2)]
-#            p = np.polyfit(bot_z, bot_T, 1)
-#            bot_T -= p[0]*bot_z + p[1]
-#            bot_ind = np.argmax(bot_T)
         print(z[bot_ind], z[top_ind], bot_ind, top_ind)
-#            
-#        plt.plot(z, T_std)
-#        try:
-#            plt.plot(bot_z, bot_T)
-#        except:
-#            print('nope')
-#        plt.savefig('bl_find.png')
-#        plt.close()
 
         return z[bot_ind], z[top_ind], bot_ind, top_ind
 
