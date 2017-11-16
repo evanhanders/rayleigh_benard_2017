@@ -156,7 +156,7 @@ def Rayleigh_Benard(Rayleigh=1e6, Prandtl=1, nz=64, nx=None, aspect=4,
     solver.stop_iteration = run_time_iter
 
     # Analysis
-    output_dt = 0.25
+    output_dt = 0.2
     max_dt    = output_dt
     analysis_tasks = equations.initialize_output(solver, data_dir, coeff_output=coeff_output, output_dt=output_dt, mode=mode)
 
@@ -182,6 +182,9 @@ def Rayleigh_Benard(Rayleigh=1e6, Prandtl=1, nz=64, nx=None, aspect=4,
                                    min_bvp_time=min_bvp_time)
         bc_dict.pop('stress_free')
         bc_dict.pop('no_slip')
+    else:
+        flow.add_property("plane_std(T1)", name='T1_std_IVP')
+    flow.add_property("(T1 - plane_avg(T1))**2", name='T1_pstd_IVP')
 
     first_step = True
     # Main loop
@@ -196,6 +199,7 @@ def Rayleigh_Benard(Rayleigh=1e6, Prandtl=1, nz=64, nx=None, aspect=4,
             log_string =  'Iteration: {:5d}, '.format(solver.iteration)
             log_string += 'Time: {:8.3e} ({:8.3e} therm), dt: {:8.3e}, '.format(solver.sim_time, solver.sim_time/equations.thermal_time,  dt)
             log_string += 'Re: {:8.3e}/{:8.3e}'.format(Re_avg, flow.max('Re'))
+            log_string += ', T_std: {:8.3e}/{:8.3e}'.format(flow.grid_average('T1_pstd_IVP'), flow.max('T1_std_IVP'))
             logger.info(log_string)
 
             if do_bvp:

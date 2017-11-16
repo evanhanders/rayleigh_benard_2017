@@ -165,7 +165,7 @@ class BVPSolverBase:
         self.current_local_avg = OrderedDict()
         self.current_local_l2  = OrderedDict()
         for fd, info in self.FIELDS.items():
-            if info[1] == 0 or info[1] == 1:
+            if info[1] == 0 or info[1] == 1 or info[1] == 2:
                 self.partial_prof_dict[fd]  = np.zeros(self.n_per_proc)
 #                self.partial_std_dict[fd]  = np.zeros(self.n_per_proc)
                 self.current_local_avg[fd]  = np.zeros(self.n_per_proc)
@@ -212,6 +212,9 @@ class BVPSolverBase:
             self.partial_prof_dict[prof_name] += \
                         dt*self.flow.properties['{}'.format(prof_name)]['g'][0,:]**2
         elif avg_type == 2:
+            self.partial_prof_dict[prof_name] += \
+                        dt*np.sum((self.flow.properties['{}'.format(prof_name)]['g'] - np.mean(self.flow.properties['{}'.format(prof_name)]['g'], axis=0))**2, axis=0)
+        elif avg_type == 3:
 #            avg = self.partial_prof_dict[prof_name]/self.avg_time_elapsed
 #            self.partial_std_dict[prof_name] += \
 #                        (self.flow.properties['{}'.format(prof_name)]['g'] - avg)**2
@@ -232,12 +235,12 @@ class BVPSolverBase:
             prof_name       - A string, which is a key to the class FIELDS dictionary
             avg_type        - If 0, horiz avg.  If 1, full 2D field.
         """
-        if avg_type == 0 or avg_type == 1:
+        if avg_type == 0 or avg_type == 1 or avg_type == 2:
             local = np.zeros(self.nz)
             glob  = np.zeros(self.nz)
             local[self.n_per_proc*self.rank:self.n_per_proc*(self.rank+1)] = \
                         self.partial_prof_dict[prof_name]
-        elif avg_type == 2:
+        elif avg_type == 3:
             local = np.zeros((self.nx,self.nz))
             glob  = np.zeros((self.nx,self.nz))
             local[:,self.n_per_proc*self.rank:self.n_per_proc*(self.rank+1)] = \
@@ -385,7 +388,7 @@ class BVPSolverBase:
             curr_profile = self.get_full_profile(fd, avg_type=avg_type)
 #            curr_profile, curr_std = self.get_full_profile(fd, avg_type=avg_type)
             if self.rank == 0:
-                if item[1] == 0 or item[1] == 2:
+                if item[1] == 0 or item[1] == 3:
                     self.profiles_dict[fd] = curr_profile/self.avg_time_elapsed
                 else:
                     self.profiles_dict[fd] = np.sqrt(curr_profile/self.avg_time_elapsed)
@@ -408,14 +411,17 @@ class BoussinesqBVPSolver(BVPSolverBase):
 
     # 0 - full avg profile
     # 1 - stdev profile
-    # 2 - full avg field
+    # 2 - stdev of full avg field
+    # 3 - full avg field
     FIELDS = OrderedDict([  
                 ('enth_flux_IVP',       ('w*(T0+T1)', 0)),                      
                 ('T_z_IVP',             ('(T0_z+T1_z)', 0)),                      
                 ('T1_IVP',              ('T1', 0)),                      
-                ('T1_std_IVP',          ('T1', 1)),                      
+                #('T1_std_IVP',          ('T1', 1)),                      
+                ('T1_std_IVP',          ('T1', 2)),                      
                 ('T1_z_IVP',            ('T1_z', 0)),                    
-                ('T1_z_std_IVP',        ('T1_z', 1)),                      
+                #('T1_z_std_IVP',        ('T1_z', 1)),                      
+                ('T1_z_std_IVP',        ('T1_z', 2)),                      
                 ('p_IVP',               ('p', 0)), 
                         ])
     VARS   = OrderedDict([  
@@ -675,7 +681,7 @@ class BoussinesqBVPSolver(BVPSolverBase):
             plt.savefig('{}/fluxes_{:04d}.png'.format(self.plot_dir, self.plot_count))
             plt.close()
             for fd in self.FIELDS.keys():
-                if self.FIELDS[fd][1] == 0 or self.FIELDS[fd][1] == 1:
+                if self.FIELDS[fd][1] == 0 or self.FIELDS[fd][1] == 1 or self.FIELDS[fd][1] == 2:
                     plt.plot(z, self.profiles_dict[fd])
                     plt.savefig('{}/{}_{:04d}.png'.format(self.plot_dir, fd, self.plot_count))
                     plt.close()
