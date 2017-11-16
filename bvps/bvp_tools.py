@@ -9,7 +9,6 @@ import numpy as np
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
-from scipy.signal import savgol_filter
 from scipy.optimize import brentq
 from scipy.interpolate import interp1d
 
@@ -79,7 +78,7 @@ class BVPSolverBase:
     VEL_VARS   = None
 
     def __init__(self, nx, nz, flow, comm, solver, num_bvps, bvp_equil_time, bvp_transient_time=20,
-                 bvp_run_threshold=1e-2, bvp_l2_check_time=1, min_bvp_time=50, plot_dir=None,
+                 bvp_run_threshold=1e-2, bvp_l2_check_time=1, min_bvp_time=20, plot_dir=None,
                  min_avg_dt=0.05, final_equil_time = None):
         """
         Initializes the object; grabs solver states and makes room for profile averages
@@ -138,33 +137,41 @@ class BVPSolverBase:
             field, avg_type = self.FIELDS[fd]
             if avg_type == 0:
                 self.flow.add_property('plane_avg({})'.format(field), name='{}'.format(fd))
+            elif avg_type == 1:
+                self.flow.add_property('plane_std({})'.format(field), name='{}'.format(fd))
             else:
                 self.flow.add_property('{}'.format(field), name='{}'.format(fd))
                 
         if self.rank == 0:
             self.profiles_dict = OrderedDict()
+#            self.profiles_std_dict = OrderedDict()
             self.profiles_dict_last, self.profiles_dict_curr = OrderedDict(), OrderedDict()
             for fd, info in self.FIELDS.items():
-                if info[1] == 0:    
+                if info[1] == 0 or info[1] == 1:    
                     self.profiles_dict[fd]      = np.zeros(nz)
+#                    self.profiles_std_dict[fd]  = np.zeros(nz)
                     self.profiles_dict_last[fd] = np.zeros(nz)
                     self.profiles_dict_curr[fd] = np.zeros(nz)
                 else:   
                     self.profiles_dict[fd]      = np.zeros((nx,nz))
+#                    self.profiles_std_dict[fd]      = np.zeros((nx,nz))
                     self.profiles_dict_last[fd] = np.zeros((nx,nz))
                     self.profiles_dict_curr[fd] = np.zeros((nx,nz))
 
         # Set up a dictionary of partial profiles to track averages locally so we
         # don't have to communicate each timestep.
         self.partial_prof_dict = OrderedDict()
+#        self.partial_std_dict = OrderedDict()
         self.current_local_avg = OrderedDict()
         self.current_local_l2  = OrderedDict()
         for fd, info in self.FIELDS.items():
-            if info[1] == 0:
+            if info[1] == 0 or info[1] == 1:
                 self.partial_prof_dict[fd]  = np.zeros(self.n_per_proc)
+#                self.partial_std_dict[fd]  = np.zeros(self.n_per_proc)
                 self.current_local_avg[fd]  = np.zeros(self.n_per_proc)
             else:
                 self.partial_prof_dict[fd]  = np.zeros((nx, self.n_per_proc))
+#                self.partial_std_dict[fd]  = np.zeros((nx, self.n_per_proc))
                 self.current_local_avg[fd]  = np.zeros((nx, self.n_per_proc))
             self.current_local_l2[fd] = 0
 
@@ -196,11 +203,21 @@ class BVPSolverBase:
             avg_type        - If 0, horiz avg.  If 1, full 2D field.
         """
         if avg_type == 0:
+#            avg = self.partial_prof_dict[prof_name]/self.avg_time_elapsed
+#            self.partial_std_dict[prof_name] += \
+#                        (self.flow.properties['{}'.format(prof_name)]['g'][0,:] - avg)**2
             self.partial_prof_dict[prof_name] += \
                         dt*self.flow.properties['{}'.format(prof_name)]['g'][0,:]
         elif avg_type == 1:
             self.partial_prof_dict[prof_name] += \
+                        dt*self.flow.properties['{}'.format(prof_name)]['g'][0,:]**2
+        elif avg_type == 2:
+#            avg = self.partial_prof_dict[prof_name]/self.avg_time_elapsed
+#            self.partial_std_dict[prof_name] += \
+#                        (self.flow.properties['{}'.format(prof_name)]['g'] - avg)**2
+            self.partial_prof_dict[prof_name] += \
                         dt*self.flow.properties['{}'.format(prof_name)]['g']
+
 
     def _update_profiles_dict(self, *args, **kwargs):
         pass
@@ -215,23 +232,40 @@ class BVPSolverBase:
             prof_name       - A string, which is a key to the class FIELDS dictionary
             avg_type        - If 0, horiz avg.  If 1, full 2D field.
         """
-        if avg_type == 0:
+        if avg_type == 0 or avg_type == 1:
             local = np.zeros(self.nz)
             glob  = np.zeros(self.nz)
             local[self.n_per_proc*self.rank:self.n_per_proc*(self.rank+1)] = \
                         self.partial_prof_dict[prof_name]
-        elif avg_type == 1:
+        elif avg_type == 2:
             local = np.zeros((self.nx,self.nz))
             glob  = np.zeros((self.nx,self.nz))
             local[:,self.n_per_proc*self.rank:self.n_per_proc*(self.rank+1)] = \
                         self.partial_prof_dict[prof_name]
         self.comm.Allreduce(local, glob, op=MPI.SUM)
-        return glob
+
+        profile = glob
+        return profile
+#
+#        if avg_type == 0 or avg_type == 1:
+#            local = np.zeros(self.nz)
+#            glob  = np.zeros(self.nz)
+#            local[self.n_per_proc*self.rank:self.n_per_proc*(self.rank+1)] = \
+#                        self.partial_std_dict[prof_name]
+#        elif avg_type == 2:
+#            local = np.zeros((self.nx,self.nz))
+#            glob  = np.zeros((self.nx,self.nz))
+#            local[:,self.n_per_proc*self.rank:self.n_per_proc*(self.rank+1)] = \
+#                        self.partial_std_dict[prof_name]
+#        self.comm.Allreduce(local, glob, op=MPI.SUM)
+#
+#        std = glob
+#        return profile, std
 
     def update_avgs(self, dt, min_Re = 1):
         """
         If proper conditions are met, this function adds the time-weighted vertical profile
-        of all profiles in FIELDS to the appropriate arrays which are tracking classes. The
+        of all profiles in FIELDS to the appropprof_nameate arrays which are tracking classes. The
         size of the timestep is also recorded.
 
         The averages taken by this class are time-weighted averages of horizontal averages, such
@@ -304,8 +338,9 @@ class BVPSolverBase:
                 file_name = self.plot_dir + "profile_dict_file_{:04d}.h5".format(self.files_saved)
                 with h5py.File(file_name, 'w') as f:
                     for k, item in self.profiles_dict.items():
-                        print(k, item)
                         f[k] = item
+#                    for k, item in self.profiles_std_dict.items():
+#                        f['{}_std'.format(k)] = item
                     f['z'] = global_z
             self.files_saved += 1
                     
@@ -348,8 +383,13 @@ class BVPSolverBase:
         for fd, item in self.FIELDS.items():
             defn, avg_type = item
             curr_profile = self.get_full_profile(fd, avg_type=avg_type)
+#            curr_profile, curr_std = self.get_full_profile(fd, avg_type=avg_type)
             if self.rank == 0:
-                self.profiles_dict[fd] = curr_profile/self.avg_time_elapsed
+                if item[1] == 0 or item[1] == 2:
+                    self.profiles_dict[fd] = curr_profile/self.avg_time_elapsed
+                else:
+                    self.profiles_dict[fd] = np.sqrt(curr_profile/self.avg_time_elapsed)
+#                self.profiles_std_dict[fd] = np.sqrt(curr_std)
                 self.profiles_dict_curr[fd] = 1*self.profiles_dict[fd]
         self._save_file()
 
@@ -367,11 +407,13 @@ class BoussinesqBVPSolver(BVPSolverBase):
     """
 
     # 0 - full avg profile
-    # 1 - full avg field
+    # 1 - stdev profile
+    # 2 - full avg field
     FIELDS = OrderedDict([  
                 ('enth_flux_IVP',       ('w*(T0+T1)', 0)),                      
                 ('T_z_IVP',             ('(T0_z+T1_z)', 0)),                      
                 ('T1_IVP',              ('T1', 0)),                      
+                ('T1_std_IVP',          ('T1', 1)),                      
                 ('T1_z_IVP',            ('T1_z', 0)),                    
                 ('p_IVP',               ('p', 0)), 
                         ])
@@ -418,137 +460,162 @@ class BoussinesqBVPSolver(BVPSolverBase):
         for key in atmosphere.dirichlet_set:
             atmosphere.problem.meta[key]['z']['dirichlet'] = True
 
-    def _find_BL_thick(self, z, atmosphere):
+    def _find_BL_thick(self, z, atmosphere, bc_dict):
         """
         Iteratively solve for the size of the boundary layers at the top and bottom
         of the atmosphere.  Return the z locations of those boundary layers, as well
         as their indices.
         """
+        
+        T_std = 1*self.profiles_dict['T1_std_IVP']
 
-        #Search for BLs in temperature profile.
-        atmosphere.T0.set_scales(self.nz/atmosphere.nz, keep_data=True)
-        T_profile = self.profiles_dict['T1_IVP'] + atmosphere.T0['g']
+        if bc_dict['fixed_temperature']:
+            bot_ind = np.argmax(T_std[:int(self.nz/2)])
+            top_ind = np.argmax(T_std[int(self.nz/2):]) + int(self.nz/2)
+        elif bc_dict['mixed_flux_temperature']:
+            top_ind = np.argmax(T_std[int(self.nz/2):]) + int(self.nz/2)
 
-        #In boundary layers, fit at least 3 points to the lines
-        n_pts_start = 3
-
-        #Start with an initial guess of BL for properly fitting the central part of the domain.
-        low_bl_prev = 0.125*atmosphere.Lz
-        upp_bl_prev = 0.875*atmosphere.Lz
-
-
-        tolerance = 1e-6
-        change = 1e10
-        count = 0
-        while change > tolerance:
-            #fit a polynomial to the atmosphere from 2*bottom BL thickness - 2*top bl thickness
-            #   This keeps the polynomial from being affected by the squishiness of the boundary layer
-            xs = z[(z>2*low_bl_prev)*(z<atmosphere.Lz-2*(atmosphere.Lz - upp_bl_prev))]
-            ys = T_profile[(z>2*low_bl_prev)*(z<atmosphere.Lz - 2*(atmosphere.Lz - upp_bl_prev))]
-            xs_full = z[(z>low_bl_prev)*(z<upp_bl_prev)]
-            ys_full = T_profile[(z>low_bl_prev)*(z< upp_bl_prev)]
-
-            #Fit polynomials of order 1 - 5
-            powers = np.arange(5)
-            for i in range(len(powers)):
-                n = 1+i
-                p = np.polyfit(xs, ys, n)
-                line = np.zeros_like(xs_full)
-                for j in range(n+1):
-                    line += p[j]*xs_full**(n-j)
-                #See how well this fits the full bulk (the area between the BLs)
-                powers[i] = np.sum(np.abs( (line - ys_full) / ys_full))
-
-            #Whichever polynomial was the best fit is the one we use.
-            pow_fit = np.argmin(powers) + 1
-            p_poly  = np.polyfit(xs, ys, pow_fit)
-            p_line  = np.polyfit(xs, ys, 1)
-
-            #Create an array containing the polynomial and also a best-fit line.
-            line_fit = np.zeros_like(z)
-            poly_fit = np.zeros_like(z)
-            for i in range(pow_fit+1):
-                poly_fit += p_poly[i]*z**(pow_fit-i)
-            line_fit = p_line[0]*z + p_line[1]
-
-            #Find the bottom boundary layer thickness
-            # fit lines from the boundary heading towards the bulk, using an increasing number of points
-            n_max_bot = len(z[z<=low_bl_prev]) - n_pts_start
-            slopes_bot = np.zeros(n_max_bot)
-            for i in range(n_max_bot):
-                bot_z = z[:n_pts_start+i]
-                bot_prof = T_profile[:n_pts_start+i]
-                p = np.polyfit(bot_z, bot_prof, 1)
-                slopes_bot[i] = p[0]
+            bot_T = T_std[:int(self.nz/2)]
+            bot_z = z[:int(self.nz/2)]
+            p = np.polyfit(bot_z, bot_T, 1)
+            bot_T -= p[0]*bot_z + p[1]
+            bot_ind = np.argmax(bot_T)
+        print(z[bot_ind], z[top_ind], bot_ind, top_ind)
             
-            #Get rid of the upper half of the points (probably towards edge of BL)
-            # Then, only use points that get us within 5% of the mean BL slope value.
-            m_slopes = np.mean(slopes_bot[:len(slopes_bot)/2])
-            last_bot     = np.where(np.abs((slopes_bot/m_slopes - 1)) < 0.05)[0][-1]
-            fit_bot  = np.polyfit(z[:n_pts_start+last_bot], T_profile[:n_pts_start+last_bot], 1)
-
-            #Same process, upper BL.
-            n_max_top = len(z[z>=upp_bl_prev]) - n_pts_start
-            slopes_top = np.zeros(n_max_top)
-            for i in range(n_max_top):
-                top_z = z[-n_pts_start-i:]
-                top_prof = T_profile[-n_pts_start-i:]
-                p = np.polyfit(top_z, top_prof, 1)
-                slopes_top[i] = p[0]
-            
-            m_slopes = np.mean(slopes_top[:len(slopes_top)/2])
-            last_top     = np.where(np.abs((slopes_top/m_slopes - 1)) < 0.05)[0][-1]
-            fit_top  = np.polyfit(z[-n_pts_start-last_top:], T_profile[-n_pts_start-last_top:], 1)
-
-            #Plot up fitting process.
-            plt.plot(z, T_profile)
-            plt.plot(z, line_fit)
-            plt.plot(z, poly_fit)
-            plt.plot(z, z*fit_bot[0] + fit_bot[1])
-            plt.plot(z, z*fit_top[0] + fit_top[1])
-            plt.plot(z[(z>low_bl_prev)*(z<upp_bl_prev)],T_profile[(z>low_bl_prev)*(z<upp_bl_prev)],ls='--', lw=2)
-            plt.axvline(low_bl_prev)
-            plt.axvline(upp_bl_prev)
-            plt.ylim(np.min(T_profile), np.max(T_profile))
-            plt.xlim(np.min(z), np.max(z))
-            plt.savefig('{}/bl_find_{:04d}-{:02d}.png'.format(self.plot_dir, self.plot_count, count))
-            count += 1
-            plt.close()
-
-            #Find where bulk polynomial intersects boundary layer line.
-            # If the two never cross each other, use the bulk best fit line.
-            bot_func = interp1d(z, poly_fit - (fit_bot[0]*z + fit_bot[1]))
-            top_func = interp1d(z, poly_fit - (fit_top[0]*z + fit_top[1]))
-            if bot_func(np.min(z))/bot_func(0.5*atmosphere.Lz) > 0:
-                bot_func = interp1d(z, line_fit - (fit_bot[0]*z + fit_bot[1]))
-            if top_func(0.5*atmosphere.Lz)/top_func(np.max(z)) > 0:
-                top_func = interp1d(z, line_fit - (fit_top[0]*z + fit_top[1]))
-                
-            low_bl = brentq(bot_func, np.min(z), 0.5*atmosphere.Lz)
-            upp_bl = brentq(top_func, 0.5*atmosphere.Lz, np.max(z))
-
-            #Update variables to see if we've converged on the BL value.
-            change_low = np.abs(low_bl/low_bl_prev - 1)
-            change_upp = np.abs(upp_bl/upp_bl_prev - 1)
-            change = 0.5*(change_low + change_upp)
-
-            low_bl_prev, upp_bl_prev = low_bl, upp_bl
-
-        # Make plot of boundary layer find final product
-        plt.plot(z, T_profile)
-        plt.plot(z, line_fit)
-        plt.plot(z, poly_fit)
-        plt.plot(z, z*fit_bot[0] + fit_bot[1])
-        plt.plot(z, z*fit_top[0] + fit_top[1])
-        plt.plot(z[(z>low_bl_prev)*(z<upp_bl_prev)],T_profile[(z>low_bl_prev)*(z<upp_bl_prev)],ls='--', lw=2)
-        plt.axvline(low_bl)
-        plt.axvline(upp_bl)
-        plt.ylim(np.min(T_profile), np.max(T_profile))
-        plt.xlim(np.min(z), np.max(z))
-        plt.savefig('{}/bl_find_final_{:04d}.png'.format(self.plot_dir, self.plot_count))
+        plt.plot(z, T_std)
+        try:
+            plt.plot(bot_z, bot_T)
+        except:
+            print('nope')
+        plt.savefig('bl_find.png')
         plt.close()
 
-        return low_bl, upp_bl, np.where(z > low_bl)[0][0], np.where(z < upp_bl)[0][-1]
+        return z[bot_ind], z[top_ind], bot_ind, top_ind
+
+#        #Search for BLs in temperature profile.
+#        atmosphere.T0.set_scales(self.nz/atmosphere.nz, keep_data=True)
+#        T_profile = self.profiles_dict['T1_IVP'] + atmosphere.T0['g']
+#
+#        #In boundary layers, fit at least 3 points to the lines
+#        n_pts_start = 3
+#
+#        #Start with an initial guess of BL for properly fitting the central part of the domain.
+#        low_bl_prev = 0.125*atmosphere.Lz
+#        upp_bl_prev = 0.875*atmosphere.Lz
+#
+#
+#        tolerance = 1e-6
+#        change = 1e10
+#        count = 0
+#        while change > tolerance:
+#            #fit a polynomial to the atmosphere from 2*bottom BL thickness - 2*top bl thickness
+#            #   This keeps the polynomial from being affected by the squishiness of the boundary layer
+#            xs = z[(z>2*low_bl_prev)*(z<atmosphere.Lz-2*(atmosphere.Lz - upp_bl_prev))]
+#            ys = T_profile[(z>2*low_bl_prev)*(z<atmosphere.Lz - 2*(atmosphere.Lz - upp_bl_prev))]
+#            xs_full = z[(z>low_bl_prev)*(z<upp_bl_prev)]
+#            ys_full = T_profile[(z>low_bl_prev)*(z< upp_bl_prev)]
+#
+#            #Fit polynomials of order 1 - 5
+#            powers = np.arange(5)
+#            for i in range(len(powers)):
+#                n = 1+i
+#                p = np.polyfit(xs, ys, n)
+#                line = np.zeros_like(xs_full)
+#                for j in range(n+1):
+#                    line += p[j]*xs_full**(n-j)
+#                #See how well this fits the full bulk (the area between the BLs)
+#                powers[i] = np.sum(np.abs( (line - ys_full) / ys_full))
+#
+#            #Whichever polynomial was the best fit is the one we use.
+#            pow_fit = np.argmin(powers) + 1
+#            p_poly  = np.polyfit(xs, ys, pow_fit)
+#            p_line  = np.polyfit(xs, ys, 1)
+#
+#            #Create an array containing the polynomial and also a best-fit line.
+#            line_fit = np.zeros_like(z)
+#            poly_fit = np.zeros_like(z)
+#            for i in range(pow_fit+1):
+#                poly_fit += p_poly[i]*z**(pow_fit-i)
+#            line_fit = p_line[0]*z + p_line[1]
+#
+#            #Find the bottom boundary layer thickness
+#            # fit lines from the boundary heading towards the bulk, using an increasing number of points
+#            n_max_bot = len(z[z<=low_bl_prev]) - n_pts_start
+#            slopes_bot = np.zeros(n_max_bot)
+#            for i in range(n_max_bot):
+#                bot_z = z[:n_pts_start+i]
+#                bot_prof = T_profile[:n_pts_start+i]
+#                p = np.polyfit(bot_z, bot_prof, 1)
+#                slopes_bot[i] = p[0]
+#            
+#            #Get rid of the upper half of the points (probably towards edge of BL)
+#            # Then, only use points that get us within 5% of the mean BL slope value.
+#            m_slopes = np.mean(slopes_bot[:len(slopes_bot)/2])
+#            last_bot     = np.where(np.abs((slopes_bot/m_slopes - 1)) < 0.05)[0][-1]
+#            fit_bot  = np.polyfit(z[:n_pts_start+last_bot], T_profile[:n_pts_start+last_bot], 1)
+#
+#            #Same process, upper BL.
+#            n_max_top = len(z[z>=upp_bl_prev]) - n_pts_start
+#            slopes_top = np.zeros(n_max_top)
+#            for i in range(n_max_top):
+#                top_z = z[-n_pts_start-i:]
+#                top_prof = T_profile[-n_pts_start-i:]
+#                p = np.polyfit(top_z, top_prof, 1)
+#                slopes_top[i] = p[0]
+#            
+#            m_slopes = np.mean(slopes_top[:len(slopes_top)/2])
+#            last_top     = np.where(np.abs((slopes_top/m_slopes - 1)) < 0.05)[0][-1]
+#            fit_top  = np.polyfit(z[-n_pts_start-last_top:], T_profile[-n_pts_start-last_top:], 1)
+#
+#            #Plot up fitting process.
+#            plt.plot(z, T_profile)
+#            plt.plot(z, line_fit)
+#            plt.plot(z, poly_fit)
+#            plt.plot(z, z*fit_bot[0] + fit_bot[1])
+#            plt.plot(z, z*fit_top[0] + fit_top[1])
+#            plt.plot(z[(z>low_bl_prev)*(z<upp_bl_prev)],T_profile[(z>low_bl_prev)*(z<upp_bl_prev)],ls='--', lw=2)
+#            plt.axvline(low_bl_prev)
+#            plt.axvline(upp_bl_prev)
+#            plt.ylim(np.min(T_profile), np.max(T_profile))
+#            plt.xlim(np.min(z), np.max(z))
+#            plt.savefig('{}/bl_find_{:04d}-{:02d}.png'.format(self.plot_dir, self.plot_count, count))
+#            count += 1
+#            plt.close()
+#
+#            #Find where bulk polynomial intersects boundary layer line.
+#            # If the two never cross each other, use the bulk best fit line.
+#            bot_func = interp1d(z, poly_fit - (fit_bot[0]*z + fit_bot[1]))
+#            top_func = interp1d(z, poly_fit - (fit_top[0]*z + fit_top[1]))
+#            if bot_func(np.min(z))/bot_func(0.5*atmosphere.Lz) > 0:
+#                bot_func = interp1d(z, line_fit - (fit_bot[0]*z + fit_bot[1]))
+#            if top_func(0.5*atmosphere.Lz)/top_func(np.max(z)) > 0:
+#                top_func = interp1d(z, line_fit - (fit_top[0]*z + fit_top[1]))
+#                
+#            low_bl = brentq(bot_func, np.min(z), 0.5*atmosphere.Lz)
+#            upp_bl = brentq(top_func, 0.5*atmosphere.Lz, np.max(z))
+#
+#            #Update variables to see if we've converged on the BL value.
+#            change_low = np.abs(low_bl/low_bl_prev - 1)
+#            change_upp = np.abs(upp_bl/upp_bl_prev - 1)
+#            change = 0.5*(change_low + change_upp)
+#
+#            low_bl_prev, upp_bl_prev = low_bl, upp_bl
+#
+#        # Make plot of boundary layer find final product
+#        plt.plot(z, T_profile)
+#        plt.plot(z, line_fit)
+#        plt.plot(z, poly_fit)
+#        plt.plot(z, z*fit_bot[0] + fit_bot[1])
+#        plt.plot(z, z*fit_top[0] + fit_top[1])
+#        plt.plot(z[(z>low_bl_prev)*(z<upp_bl_prev)],T_profile[(z>low_bl_prev)*(z<upp_bl_prev)],ls='--', lw=2)
+#        plt.axvline(low_bl)
+#        plt.axvline(upp_bl)
+#        plt.ylim(np.min(T_profile), np.max(T_profile))
+#        plt.xlim(np.min(z), np.max(z))
+#        plt.savefig('{}/bl_find_final_{:04d}.png'.format(self.plot_dir, self.plot_count))
+#        plt.close()
+#
+#        return low_bl, upp_bl, np.where(z > low_bl)[0][0], np.where(z < upp_bl)[0][-1]
 
     def _update_profiles_dict(self, bc_kwargs, atmosphere, vel_adjust_factor):
         """
@@ -562,7 +629,7 @@ class BoussinesqBVPSolver(BVPSolverBase):
         z = z['g']
 
         #Find the boundary layers.  This is RB, so get the mean boundary layer thickness (symmetry assumed)
-        bl_bot, bl_top, bl_bot_ind, bl_top_ind = self._find_BL_thick(z, atmosphere)
+        bl_bot, bl_top, bl_bot_ind, bl_top_ind = self._find_BL_thick(z, atmosphere, bc_kwargs)
         bl_thick = (bl_bot + atmosphere.Lz - bl_top)/2
 
         #Keep track of initial flux profiles, then make a new enthalpy flux profile
@@ -605,10 +672,13 @@ class BoussinesqBVPSolver(BVPSolverBase):
             plt.savefig('{}/fluxes_{:04d}.png'.format(self.plot_dir, self.plot_count))
             plt.close()
             for fd in self.FIELDS.keys():
-                if self.FIELDS[fd][1] == 0:
+                if self.FIELDS[fd][1] == 0 or self.FIELDS[fd][1] == 1:
                     plt.plot(z, self.profiles_dict[fd])
                     plt.savefig('{}/{}_{:04d}.png'.format(self.plot_dir, fd, self.plot_count))
                     plt.close()
+#                    plt.plot(z, self.profiles_std_dict[fd])
+#                    plt.savefig('{}/{}_std_{:04d}.png'.format(self.plot_dir, fd, self.plot_count))
+#                    plt.close()
         self.plot_count += 1
 
         #In the simulation, adjust the velocity field by a constant value according to the mean drop in enth flux.

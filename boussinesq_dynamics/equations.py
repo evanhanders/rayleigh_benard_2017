@@ -259,9 +259,11 @@ class BoussinesqEquations2D(Equations):
 
         if self.dimensions == 1:
             self.problem.substitutions['plane_avg(A)'] = 'A'
+            self.problem.substitutions['plane_std(A)'] = '0'
             self.problem.substitutions['vol_avg(A)']   = 'integ(A)/Lz'
         elif self.dimensions == 2:
             self.problem.substitutions['plane_avg(A)'] = 'integ(A, "x")/Lx'
+            self.problem.substitutions['plane_std(A)'] = 'sqrt(plane_avg((A - plane_avg(A))**2))'
             self.problem.substitutions['vol_avg(A)']   = 'integ(A)/Lx/Lz'
         self.problem.substitutions['UdotGrad(A, A_z)'] = '(u * dx(A) + w * A_z)'
         self.problem.substitutions['Lap(A, A_z)'] = '(dx(dx(A)) + dz(A_z))'
