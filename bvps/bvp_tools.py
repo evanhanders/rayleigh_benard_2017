@@ -15,6 +15,17 @@ from scipy.interpolate import interp1d
 from dedalus import public as de
 
 
+def bl_profile(z, bl, center=0, upper=False):
+    """ from Shishkina et al 2015 PRL, eqn 31. """
+    a = 2 * np.pi / ( 3 * np.sqrt(3) )
+    xi = (z - center) / bl
+    if upper:
+        xi *= -1
+    part1 = ( np.sqrt(3) / (4 * np.pi) ) * np.log10( (1 + a*xi)**3 / (1 + (a*xi)**3) )
+    part2 = ( 3 / (2 * np.pi) ) * np.arctan( ( 4 * np.pi / 9 ) * xi - 1 / np.sqrt(3) )
+    return part1 + part2 + 1./4
+
+
 class BVPSolverBase:
     """
     A base class for solving a BVP in the middle of a running IVP.
@@ -483,6 +494,9 @@ class BoussinesqBVPSolver(BVPSolverBase):
         elif bc_dict['mixed_flux_temperature']:
             top_ind = np.argmax(T_std[int(self.nz/2):]) + int(self.nz/2)
             bot_ind = np.argmax(Tz_std[:int(self.nz/2)])
+        elif bc_dict['fixed_flux']:
+            top_ind = np.argmax(Tz_std[int(self.nz/2):]) + int(self.nz/2)
+            bot_ind = np.argmax(Tz_std[:int(self.nz/2)])
 #                
 #            bot_T = T_std[:int(self.nz/2)]
 #            bot_z = z[:int(self.nz/2)]
@@ -500,131 +514,6 @@ class BoussinesqBVPSolver(BVPSolverBase):
 #        plt.close()
 
         return z[bot_ind], z[top_ind], bot_ind, top_ind
-
-#        #Search for BLs in temperature profile.
-#        atmosphere.T0.set_scales(self.nz/atmosphere.nz, keep_data=True)
-#        T_profile = self.profiles_dict['T1_IVP'] + atmosphere.T0['g']
-#
-#        #In boundary layers, fit at least 3 points to the lines
-#        n_pts_start = 3
-#
-#        #Start with an initial guess of BL for properly fitting the central part of the domain.
-#        low_bl_prev = 0.125*atmosphere.Lz
-#        upp_bl_prev = 0.875*atmosphere.Lz
-#
-#
-#        tolerance = 1e-6
-#        change = 1e10
-#        count = 0
-#        while change > tolerance:
-#            #fit a polynomial to the atmosphere from 2*bottom BL thickness - 2*top bl thickness
-#            #   This keeps the polynomial from being affected by the squishiness of the boundary layer
-#            xs = z[(z>2*low_bl_prev)*(z<atmosphere.Lz-2*(atmosphere.Lz - upp_bl_prev))]
-#            ys = T_profile[(z>2*low_bl_prev)*(z<atmosphere.Lz - 2*(atmosphere.Lz - upp_bl_prev))]
-#            xs_full = z[(z>low_bl_prev)*(z<upp_bl_prev)]
-#            ys_full = T_profile[(z>low_bl_prev)*(z< upp_bl_prev)]
-#
-#            #Fit polynomials of order 1 - 5
-#            powers = np.arange(5)
-#            for i in range(len(powers)):
-#                n = 1+i
-#                p = np.polyfit(xs, ys, n)
-#                line = np.zeros_like(xs_full)
-#                for j in range(n+1):
-#                    line += p[j]*xs_full**(n-j)
-#                #See how well this fits the full bulk (the area between the BLs)
-#                powers[i] = np.sum(np.abs( (line - ys_full) / ys_full))
-#
-#            #Whichever polynomial was the best fit is the one we use.
-#            pow_fit = np.argmin(powers) + 1
-#            p_poly  = np.polyfit(xs, ys, pow_fit)
-#            p_line  = np.polyfit(xs, ys, 1)
-#
-#            #Create an array containing the polynomial and also a best-fit line.
-#            line_fit = np.zeros_like(z)
-#            poly_fit = np.zeros_like(z)
-#            for i in range(pow_fit+1):
-#                poly_fit += p_poly[i]*z**(pow_fit-i)
-#            line_fit = p_line[0]*z + p_line[1]
-#
-#            #Find the bottom boundary layer thickness
-#            # fit lines from the boundary heading towards the bulk, using an increasing number of points
-#            n_max_bot = len(z[z<=low_bl_prev]) - n_pts_start
-#            slopes_bot = np.zeros(n_max_bot)
-#            for i in range(n_max_bot):
-#                bot_z = z[:n_pts_start+i]
-#                bot_prof = T_profile[:n_pts_start+i]
-#                p = np.polyfit(bot_z, bot_prof, 1)
-#                slopes_bot[i] = p[0]
-#            
-#            #Get rid of the upper half of the points (probably towards edge of BL)
-#            # Then, only use points that get us within 5% of the mean BL slope value.
-#            m_slopes = np.mean(slopes_bot[:len(slopes_bot)/2])
-#            last_bot     = np.where(np.abs((slopes_bot/m_slopes - 1)) < 0.05)[0][-1]
-#            fit_bot  = np.polyfit(z[:n_pts_start+last_bot], T_profile[:n_pts_start+last_bot], 1)
-#
-#            #Same process, upper BL.
-#            n_max_top = len(z[z>=upp_bl_prev]) - n_pts_start
-#            slopes_top = np.zeros(n_max_top)
-#            for i in range(n_max_top):
-#                top_z = z[-n_pts_start-i:]
-#                top_prof = T_profile[-n_pts_start-i:]
-#                p = np.polyfit(top_z, top_prof, 1)
-#                slopes_top[i] = p[0]
-#            
-#            m_slopes = np.mean(slopes_top[:len(slopes_top)/2])
-#            last_top     = np.where(np.abs((slopes_top/m_slopes - 1)) < 0.05)[0][-1]
-#            fit_top  = np.polyfit(z[-n_pts_start-last_top:], T_profile[-n_pts_start-last_top:], 1)
-#
-#            #Plot up fitting process.
-#            plt.plot(z, T_profile)
-#            plt.plot(z, line_fit)
-#            plt.plot(z, poly_fit)
-#            plt.plot(z, z*fit_bot[0] + fit_bot[1])
-#            plt.plot(z, z*fit_top[0] + fit_top[1])
-#            plt.plot(z[(z>low_bl_prev)*(z<upp_bl_prev)],T_profile[(z>low_bl_prev)*(z<upp_bl_prev)],ls='--', lw=2)
-#            plt.axvline(low_bl_prev)
-#            plt.axvline(upp_bl_prev)
-#            plt.ylim(np.min(T_profile), np.max(T_profile))
-#            plt.xlim(np.min(z), np.max(z))
-#            plt.savefig('{}/bl_find_{:04d}-{:02d}.png'.format(self.plot_dir, self.plot_count, count))
-#            count += 1
-#            plt.close()
-#
-#            #Find where bulk polynomial intersects boundary layer line.
-#            # If the two never cross each other, use the bulk best fit line.
-#            bot_func = interp1d(z, poly_fit - (fit_bot[0]*z + fit_bot[1]))
-#            top_func = interp1d(z, poly_fit - (fit_top[0]*z + fit_top[1]))
-#            if bot_func(np.min(z))/bot_func(0.5*atmosphere.Lz) > 0:
-#                bot_func = interp1d(z, line_fit - (fit_bot[0]*z + fit_bot[1]))
-#            if top_func(0.5*atmosphere.Lz)/top_func(np.max(z)) > 0:
-#                top_func = interp1d(z, line_fit - (fit_top[0]*z + fit_top[1]))
-#                
-#            low_bl = brentq(bot_func, np.min(z), 0.5*atmosphere.Lz)
-#            upp_bl = brentq(top_func, 0.5*atmosphere.Lz, np.max(z))
-#
-#            #Update variables to see if we've converged on the BL value.
-#            change_low = np.abs(low_bl/low_bl_prev - 1)
-#            change_upp = np.abs(upp_bl/upp_bl_prev - 1)
-#            change = 0.5*(change_low + change_upp)
-#
-#            low_bl_prev, upp_bl_prev = low_bl, upp_bl
-#
-#        # Make plot of boundary layer find final product
-#        plt.plot(z, T_profile)
-#        plt.plot(z, line_fit)
-#        plt.plot(z, poly_fit)
-#        plt.plot(z, z*fit_bot[0] + fit_bot[1])
-#        plt.plot(z, z*fit_top[0] + fit_top[1])
-#        plt.plot(z[(z>low_bl_prev)*(z<upp_bl_prev)],T_profile[(z>low_bl_prev)*(z<upp_bl_prev)],ls='--', lw=2)
-#        plt.axvline(low_bl)
-#        plt.axvline(upp_bl)
-#        plt.ylim(np.min(T_profile), np.max(T_profile))
-#        plt.xlim(np.min(z), np.max(z))
-#        plt.savefig('{}/bl_find_final_{:04d}.png'.format(self.plot_dir, self.plot_count))
-#        plt.close()
-#
-#        return low_bl, upp_bl, np.where(z > low_bl)[0][0], np.where(z < upp_bl)[0][-1]
 
     def _update_profiles_dict(self, bc_kwargs, atmosphere, vel_adjust_factor):
         """
@@ -647,7 +536,10 @@ class BoussinesqBVPSolver(BVPSolverBase):
 
         #Enthalpy flux carries everything in the bulk, and nothing at the boundaries.  Assume gaussian boundary shapes.
         sigma = bl_thick
-        self.profiles_dict['enth_flux_IVP'] = (1 - np.exp(-z**2 / 2 / (sigma)**2) - np.exp(-(z-atmosphere.Lz)**2 / 2 / (sigma)**2) )
+        bot_profile = bl_profile(z, bl_thick, center=0, upper=False)
+        top_profile = bl_profile(z, bl_thick, center=atmosphere.Lz, upper=True)
+        self.profiles_dict['enth_flux_IVP'] = bot_profile*top_profile
+        #(1 - np.exp(-z**2 / 2 / (sigma)**2) - np.exp(-(z-atmosphere.Lz)**2 / 2 / (sigma)**2) )
 
         if bc_kwargs['fixed_temperature']:
             #Fixed T case: amount of flux can be derived from shape of enthalpy flux and from boundary layer thickness.
