@@ -25,6 +25,17 @@ def bl_profile(z, bl, center=0, upper=False):
     part2 = ( 3 / (2 * np.pi) ) * np.arctan( ( 4 * np.pi / 9 ) * xi - 1 / np.sqrt(3) )
     return part1 + part2 + 1./4
 
+def bl_Tz_profile(z, bl, center=0, upper=False):
+    """ Derivative of eqn 31 from Shishkina et al 2015 PRL. Normalized to 1 at the boundary. """
+    a = 2 * np.pi / ( 3 * np.sqrt(3) )
+    xi = (z - center) / bl
+    if upper:
+        xi *= -1
+    part1 = (1/2.) * ( 1/(1 + a*xi) - a**2 * xi**2 / (1 + (a*xi)**3) )
+    part2 = (2/3.) * 1 / (1. + (4*np.pi/9. * xi - 1/np.sqrt(3.))**2)
+    return part1 + part2 
+
+
 
 class BVPSolverBase:
     """
@@ -490,9 +501,11 @@ class BoussinesqBVPSolver(BVPSolverBase):
 
         #Enthalpy flux carries everything in the bulk, and nothing at the boundaries.  Assume gaussian boundary shapes.
         sigma = bl_thick
-        bot_profile = bl_profile(z, bl_thick, center=0, upper=False)
-        top_profile = bl_profile(z, bl_thick, center=atmosphere.Lz, upper=True)
-        self.profiles_dict['enth_flux_IVP'] = bot_profile*top_profile
+        bot_profile = bl_Tz_profile(z, bl_thick, center=0, upper=False)
+        top_profile = bl_Tz_profile(z, bl_thick, center=atmosphere.Lz, upper=True)
+        profile = bot_profile + top_profile
+        profile /= bot_profile[0] #Properly normalize so that there's no leftover effects of the other side's stabilizing.
+        self.profiles_dict['enth_flux_IVP'] = 1 - profile
         #(1 - np.exp(-z**2 / 2 / (sigma)**2) - np.exp(-(z-atmosphere.Lz)**2 / 2 / (sigma)**2) )
 
         if bc_kwargs['fixed_temperature']:
