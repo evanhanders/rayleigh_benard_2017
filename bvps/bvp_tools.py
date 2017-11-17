@@ -21,7 +21,7 @@ def bl_profile(z, bl, center=0, upper=False):
     xi = (z - center) / bl
     if upper:
         xi *= -1
-    part1 = ( np.sqrt(3) / (4 * np.pi) ) * np.log10( (1 + a*xi)**3 / (1 + (a*xi)**3) )
+    part1 = ( np.sqrt(3) / (4 * np.pi) ) * np.log( (1 + a*xi)**3 / (1 + (a*xi)**3) )
     part2 = ( 3 / (2 * np.pi) ) * np.arctan( ( 4 * np.pi / 9 ) * xi - 1 / np.sqrt(3) )
     return part1 + part2 + 1./4
 
