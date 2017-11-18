@@ -85,6 +85,23 @@ def plot_energies(data, times, output_path='./'):
     ax1.legend()
     figs["log_fluctuating_energies"] = fig_log
 
+    fig_Nu = plt.figure(figsize=(16,8))
+    ax1 = fig_Nu.add_subplot(1,1,1)
+    ax1.semilogy(t, data['Nu'], label="Nu")
+    ax1.set_xlabel("time")
+    ax1.set_ylabel("Nu")
+    ax1.legend()
+    figs["nusselt_fixedT"] = fig_Nu
+
+    fig_Nu_flux = plt.figure(figsize=(16,8))
+    ax1 = fig_Nu_flux.add_subplot(1,1,1)
+    ax1.semilogy(t, data['Nu_flux'], label="Nu_flux")
+    ax1.set_xlabel("time")
+    ax1.set_ylabel("Nu_flux")
+    ax1.legend()
+    figs["nusselt_fixedFlux"] = fig_Nu_flux
+
+
     for key in figs.keys():
         figs[key].savefig(output_path+'scalar_{}.png'.format(key))
     

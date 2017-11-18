@@ -537,7 +537,13 @@ class BoussinesqBVPSolver(BVPSolverBase):
             plt.plot(z, self.profiles_dict['enth_flux_IVP'], lw=2, ls='--')
             plt.axvline(bl_bot)
             plt.axvline(bl_top)
-            plt.savefig('{}/fluxes_{:04d}.png'.format(self.plot_dir, self.plot_count))
+            plt.savefig('{}/fluxes_before_{:04d}.png'.format(self.plot_dir, self.plot_count))
+            plt.close()
+            plt.plot(z, self.profiles_dict['enth_flux_IVP'], lw=2, ls='--')
+            plt.plot(z, flux_through_system - self.profiles_dict['enth_flux_IVP'], lw=2, ls='--')
+            plt.axvline(bl_bot)
+            plt.axvline(bl_top)
+            plt.savefig('{}/fluxes_after_{:04d}.png'.format(self.plot_dir, self.plot_count))
             plt.close()
             for fd in self.FIELDS.keys():
                 if self.FIELDS[fd][1] == 0 or self.FIELDS[fd][1] == 1 or self.FIELDS[fd][1] == 2:
