@@ -304,8 +304,10 @@ class BoussinesqEquations2D(Equations):
             self.problem.substitutions['visc_heat_R']   = '0'
             self.problem.substitutions['visc_flux_z'] = '0'
             
-        self.problem.substitutions['conv_flux_z'] = '(w*T1 + visc_flux_z)/P'
-        self.problem.substitutions['kappa_flux_z'] = '(-T1_z)'
+        self.problem.substitutions['enth_flux_z'] = '(w*(T1+T0))'
+        self.problem.substitutions['kappa_flux_z'] = '(-P*(T1_z+T0_z))'
+        self.problem.substitutions['conv_flux_z'] = '(enth_flux_z + kappa_flux_z)'
+        self.problem.substitutions['Nu']           = '(conv_flux_z/(-P*T0_z*Lz))'
 
 
        
@@ -472,8 +474,9 @@ class BoussinesqEquations2D(Equations):
         scalar.add_task("0.5*vol_avg(w_fluc*w_fluc)", name="KE_z_fluc")
         scalar.add_task("vol_avg(plane_avg(u)**2)", name="u_avg")
         scalar.add_task("vol_avg((u - plane_avg(u))**2)", name="u1")
-        scalar.add_task("vol_avg(conv_flux_z) + 1.", name="Nu")
-        scalar.add_task("(1-vol_avg(conv_flux_z))**(-1.)", name="Nu_flux")
+        scalar.add_task("vol_avg(Nu)", name="Nu")
+        #scalar.add_task("vol_avg(conv_flux_z) + 1.", name="Nu")
+        scalar.add_task("(1-vol_avg(enth_flux_z/P))**(-1.)", name="Nu_flux")
         scalar.add_task("vol_avg(Re)", name="Re")
         scalar.add_task("vol_avg(Pe)", name="Pe")
         analysis_tasks.append(scalar)
