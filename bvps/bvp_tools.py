@@ -405,6 +405,7 @@ class BoussinesqBVPSolver(BVPSolverBase):
     # 3 - full avg field
     FIELDS = OrderedDict([  
                 ('enth_flux_IVP',       ('w*(T0+T1)', 0)),                      
+                ('tot_flux_IVP',        ('(w*(T0+T1) - P*(T0_z+T1_z))', 0)),                      
                 ('T_z_IVP',             ('(T0_z+T1_z)', 0)),                      
                 ('T1_IVP',              ('T1', 0)),                      
                 #('T1_std_IVP',          ('T1', 1)),                      
@@ -500,42 +501,51 @@ class BoussinesqBVPSolver(BVPSolverBase):
         init_kappa_flux = -atmosphere.P * self.profiles_dict['T_z_IVP']
         init_enth_flux = 1*self.profiles_dict['enth_flux_IVP']
 
-        #Enthalpy flux carries everything in the bulk, and nothing at the boundaries.  Assume gaussian boundary shapes.
-        bot_profile = bl_Tz_profile(z, bl_thick/1, center=0, upper=False)
-        top_profile = bl_Tz_profile(z, bl_thick/1, center=atmosphere.Lz, upper=True)
-        profile = bot_profile + top_profile
-        profile /= bot_profile[0] #Properly normalize so that there's no leftover effects of the other side's stabilizing.
-        self.profiles_dict['enth_flux_IVP'] = 1 - profile
-        #(1 - np.exp(-z**2 / 2 / (sigma)**2) - np.exp(-(z-atmosphere.Lz)**2 / 2 / (sigma)**2) )
+#        #Enthalpy flux carries everything in the bulk, and nothing at the boundaries.  Assume gaussian boundary shapes.
+#        bot_profile = bl_Tz_profile(z, bl_thick/1, center=0, upper=False)
+#        top_profile = bl_Tz_profile(z, bl_thick/1, center=atmosphere.Lz, upper=True)
+#        profile = bot_profile + top_profile
+#        profile /= bot_profile[0] #Properly normalize so that there's no leftover effects of the other side's stabilizing.
+#        self.profiles_dict['enth_flux_IVP'] = 1 - profile
+#        #(1 - np.exp(-z**2 / 2 / (sigma)**2) - np.exp(-(z-atmosphere.Lz)**2 / 2 / (sigma)**2) )
+#
+#        if bc_kwargs['fixed_temperature']:
+#            #Fixed T case: amount of flux can be derived from shape of enthalpy flux and from boundary layer thickness.
+#            flux = atmosphere._new_field()
+#            flux_int = atmosphere._new_field()
+#            flux.set_scales(self.nz/atmosphere.nz, keep_data=False)
+#            flux['g'] = self.profiles_dict['enth_flux_IVP']
+#            flux.integrate('z', out=flux_int)
+#            fconv_int = np.mean(flux_int['g'])
+#            flux.set_scales(self.nz/atmosphere.nz, keep_data=False)
+#            flux['g'] = 1-self.profiles_dict['enth_flux_IVP']
+#            flux.integrate('z', out=flux_int)
+#            frad_int = np.mean(flux_int['g'])
+#
+#            atmosphere.T0_z.set_scales(self.nz/atmosphere.nz, keep_data=True)
+#            delta_T = np.mean(atmosphere.T0.interpolate(z=atmosphere.Lz)['g'] - atmosphere.T0.interpolate(z=0)['g'])
+#
+#            A = - atmosphere.P * delta_T / frad_int
+#            flux_through_system = (1 / atmosphere.Lz)*(A * fconv_int - atmosphere.P*delta_T)
+#        elif bc_kwargs['mixed_flux_temperature']:
+#            #If there's even 1 flux boundary condition, then initial flux = final flux.
+#            atmosphere.T0_z.set_scales(self.nz/atmosphere.nz, keep_data=True)
+#            flux_through_system = -atmosphere.P * atmosphere.T0_z['g']
+#        elif bc_kwargs['fixed_flux']:
+#            atmosphere.T0_z.set_scales(self.nz/atmosphere.nz, keep_data=True)
+#            flux_through_system = -atmosphere.P * atmosphere.T0_z['g']
+        atmosphere.T0_z.set_scales(self.nz/atmosphere.nz, keep_data=True)
+        flux_through_system = -atmosphere.P * atmosphere.T0_z['g']
 
-        if bc_kwargs['fixed_temperature']:
-            #Fixed T case: amount of flux can be derived from shape of enthalpy flux and from boundary layer thickness.
-            flux = atmosphere._new_field()
-            flux_int = atmosphere._new_field()
-            flux.set_scales(self.nz/atmosphere.nz, keep_data=False)
-            flux['g'] = self.profiles_dict['enth_flux_IVP']
-            flux.integrate('z', out=flux_int)
-            fconv_int = np.mean(flux_int['g'])
-            flux.set_scales(self.nz/atmosphere.nz, keep_data=False)
-            flux['g'] = 1-self.profiles_dict['enth_flux_IVP']
-            flux.integrate('z', out=flux_int)
-            frad_int = np.mean(flux_int['g'])
-
-            atmosphere.T0_z.set_scales(self.nz/atmosphere.nz, keep_data=True)
-            delta_T = np.mean(atmosphere.T0.interpolate(z=atmosphere.Lz)['g'] - atmosphere.T0.interpolate(z=0)['g'])
-
-            A = - atmosphere.P * delta_T / frad_int
-            flux_through_system = (1 / atmosphere.Lz)*(A * fconv_int - atmosphere.P*delta_T)
-        elif bc_kwargs['mixed_flux_temperature']:
-            #If there's even 1 flux boundary condition, then initial flux = final flux.
-            atmosphere.T0_z.set_scales(self.nz/atmosphere.nz, keep_data=True)
-            flux_through_system = -atmosphere.P * atmosphere.T0_z['g']
-        elif bc_kwargs['fixed_flux']:
-            atmosphere.T0_z.set_scales(self.nz/atmosphere.nz, keep_data=True)
-            flux_through_system = -atmosphere.P * atmosphere.T0_z['g']
+        tot_flux = atmosphere._new_field()
+        int_flux = atmosphere._new_field()
+        tot_flux.set_scales(self.nz/atmosphere.nz, keep_data=True)
+        tot_flux['g'] = self.profiles_dict['tot_flux_IVP']
+        tot_flux.integrate('z', out=int_flux)
+        flux = np.mean(int_flux['g']) / atmosphere.Lz
 
         #Scale flux appropriately.
-        self.profiles_dict['enth_flux_IVP'] *= flux_through_system
+        self.profiles_dict['enth_flux_IVP'] *= flux_through_system/flux
 
         #Make some plots
         if not isinstance(self.plot_dir, type(None)):
@@ -543,6 +553,7 @@ class BoussinesqBVPSolver(BVPSolverBase):
             plt.plot(z, init_kappa_flux)
             plt.plot(z, init_enth_flux)
             plt.plot(z, self.profiles_dict['enth_flux_IVP'], lw=2, ls='--')
+            plt.plot(z, flux_through_system)
             plt.axvline(bl_bot)
             plt.axvline(bl_top)
             plt.savefig('{}/fluxes_before_{:04d}.png'.format(self.plot_dir, self.plot_count))
@@ -567,7 +578,7 @@ class BoussinesqBVPSolver(BVPSolverBase):
         #In the simulation, adjust the velocity field by a constant value according to the mean drop in enth flux.
         #print((self.profiles_dict['enth_flux_IVP'] / init_enth_flux)[int(self.nz*0.1):int(self.nz*0.9)])
         vel_adjust = np.mean((self.profiles_dict['enth_flux_IVP'] / init_enth_flux)[int(self.nz*0.1):int(self.nz*0.9)])
-        vel_adjust_factor *= vel_adjust
+        vel_adjust_factor = 1#*= vel_adjust
 
         #Report
         logger.info('vel_adj factor: {}'.format(vel_adjust))
