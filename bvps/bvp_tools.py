@@ -413,6 +413,7 @@ class BoussinesqBVPSolver(BVPSolverBase):
                 #('T1_z_std_IVP',        ('T1_z', 1)),                      
                 ('T1_z_std_IVP',        ('T1_z', 2)),                      
                 ('p_IVP',               ('p', 0)), 
+                ('nonlin_enth_flux',    ('w*(T1_z - plane_avg(T1_z))', 0)),
                         ])
     VARS   = OrderedDict([  
                 ('T1_IVP',              'T1'),
