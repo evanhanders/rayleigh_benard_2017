@@ -542,7 +542,7 @@ class BoussinesqBVPSolver(BVPSolverBase):
         tot_flux.set_scales(self.nz/atmosphere.nz, keep_data=True)
         tot_flux['g'] = self.profiles_dict['tot_flux_IVP']
         tot_flux.integrate('z', out=int_flux)
-        flux = np.mean(int_flux['g']) / atmosphere.Lz
+        flux = self.profiles_dict['tot_flux_IVP'] #np.mean(int_flux['g']) / atmosphere.Lz
 
         #Scale flux appropriately.
         self.profiles_dict['enth_flux_IVP'] *= flux_through_system/flux
