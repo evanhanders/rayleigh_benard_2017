@@ -304,10 +304,11 @@ class BoussinesqEquations2D(Equations):
             self.problem.substitutions['visc_heat_R']   = '0'
             self.problem.substitutions['visc_flux_z'] = '0'
             
-        self.problem.substitutions['enth_flux_z'] = '(w*(T1+T0))'
+        self.problem.substitutions['enth_flux_z']  = '(w*(T1+T0))'
         self.problem.substitutions['kappa_flux_z'] = '(-P*(T1_z+T0_z))'
-        self.problem.substitutions['conv_flux_z'] = '(enth_flux_z + kappa_flux_z)'
-        self.problem.substitutions['Nu']           = '(conv_flux_z/(-P*T0_z*Lz))'
+        self.problem.substitutions['conv_flux_z']  = '(enth_flux_z + kappa_flux_z)'
+        self.problem.substitutions['delta_T']      = '(right(T1 + T0) - left(T1 + T0))' 
+        self.problem.substitutions['Nu']           = '(conv_flux_z/(-P*delta_T))'
 
 
        
