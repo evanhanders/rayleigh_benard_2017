@@ -43,7 +43,7 @@ Options:
     --bvp_equil_time=<time>              How long to wait after a previous BVP before starting to average for next one, in tbuoy [default: 50]
     --bvp_final_equil_time=<time>        How long to wait after last bvp before ending simulation 
     --bvp_transient_time=<time>          How long to wait at beginning of run before starting to average for next one, in tbuoy [default: 20]
-    --min_bvp_time=<time>                Minimum avg time for a bvp (in tbuoy) [default: 20]
+    --min_bvp_time=<time>                Minimum avg time for a bvp (in tbuoy) [default: 10]
     --bvp_resolution_factor=<mult>       an int, how many times larger than nz should the bvp nz be? [default: 1]
     --bvp_convergence_factor=<fact>      How well converged time averages need to be for BVP [default: 3e-3]
 """
@@ -169,6 +169,8 @@ def Rayleigh_Benard(Rayleigh=1e6, Prandtl=1, nz=64, nx=None, aspect=4,
     flow = flow_tools.GlobalFlowProperty(solver, cadence=1)
     flow.add_property("Re", name='Re')
 
+    u, w = solver.state['u'], solver.state['w']
+
 
     if do_bvp:
         bvp_solver = BoussinesqBVPSolver(BoussinesqEquations2D, nx, nz, \
@@ -206,6 +208,8 @@ def Rayleigh_Benard(Rayleigh=1e6, Prandtl=1, nz=64, nx=None, aspect=4,
                                    }
                     diff_args = [Rayleigh, Prandtl]
                     bvp_solver.solve_BVP(atmo_kwargs, diff_args, bc_dict)
+                    u['g'] *= 0
+                    w['g'] *= 0
                 if bvp_solver.terminate_IVP():
                     continue_bvps = False
 
