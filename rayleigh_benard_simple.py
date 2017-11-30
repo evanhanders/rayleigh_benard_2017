@@ -208,8 +208,8 @@ def Rayleigh_Benard(Rayleigh=1e6, Prandtl=1, nz=64, nx=None, aspect=4,
                                    }
                     diff_args = [Rayleigh, Prandtl]
                     bvp_solver.solve_BVP(atmo_kwargs, diff_args, bc_dict)
-                    u['g'] *= 0
-                    w['g'] *= 0
+#                    u['g'] *= 0
+#                    w['g'] *= 0
                 if bvp_solver.terminate_IVP():
                     continue_bvps = False
 

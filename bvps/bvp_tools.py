@@ -186,10 +186,11 @@ class BVPSolverBase:
             if info[1] == 0 or info[1] == 1 or info[1] == 2:
                 self.partial_prof_dict[fd]  = np.zeros(self.n_per_proc)
                 self.current_local_avg[fd]  = np.zeros(self.n_per_proc)
+                self.current_local_l2[fd]   = np.zeros(self.n_per_proc)
             else:
                 self.partial_prof_dict[fd]  = np.zeros((nx, self.n_per_proc))
                 self.current_local_avg[fd]  = np.zeros((nx, self.n_per_proc))
-            self.current_local_l2[fd] = 0
+#            self.current_local_l2[fd] = 0
 
         # Set up a dictionary which tracks the states of important variables in the solver.
         self.solver_states = OrderedDict()
@@ -297,20 +298,19 @@ class BVPSolverBase:
                     self.update_local_profiles(self.curr_avg_dt, fd, avg_type=avg_type)
                     avg = self.partial_prof_dict[fd]/self.avg_time_elapsed
                     if self.first_l2:
-                        self.current_local_l2[fd]  = 0
+                        self.current_local_l2[fd]  *= 0
                         self.current_local_avg[fd] = avg
                         continue
                     else:
-                        self.current_local_l2[fd] = np.sum(np.abs((self.current_local_avg[fd] - avg)/self.current_local_avg[fd]))
+                        self.current_local_l2[fd] = np.abs((self.current_local_avg[fd] - avg)/self.current_local_avg[fd])
                         self.current_local_avg[fd] = avg
 
                 if (self.solver.sim_time - self.bvp_l2_last_check_time) > self.bvp_l2_check_time and not self.first_l2:
                     local, globl = np.zeros(len(self.FIELDS.keys())), np.zeros(len(self.FIELDS.keys()))
                     for i, k in enumerate(self.FIELDS.keys()):
-                        local[i] = self.current_local_l2[k]
-                    self.comm.Allreduce(local, globl, op=MPI.SUM)
-                    globl /= self.nz
-                    logger.info('Max avg convergence: {:.4g} / {:.4g} for BVP solve'.format(np.max(globl), self.bvp_run_threshold))
+                        local[i] = np.max(self.current_local_l2[k])
+                    self.comm.Allreduce(local, globl, op=MPI.MAX)
+                    logger.info('Max l2 norm for convergence: {:.4g} / {:.4g} for BVP solve'.format(np.max(globl), self.bvp_run_threshold))
                     if np.max(globl) < self.bvp_run_threshold:
                         self.do_bvp = True
                     else:
