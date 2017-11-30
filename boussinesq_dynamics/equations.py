@@ -459,8 +459,11 @@ class BoussinesqEquations2D(Equations):
         profiles.add_task("plane_avg(w)", name="w")
         profiles.add_task("plane_avg(enstrophy)", name="enstrophy")
         # This may have an error:
-        profiles.add_task("plane_avg(conv_flux_z)/plane_avg(kappa_flux_z) + 1", name="Nu")
-        profiles.add_task("plane_avg(conv_flux_z) + plane_avg(kappa_flux_z)",   name="Nu_2")
+        profiles.add_task("plane_avg(Nu)", name="Nu")
+        profiles.add_task("plane_avg(Re)", name="Re")
+        profiles.add_task("plane_avg(Pe)", name="Pe")
+        profiles.add_task("plane_avg(enth_flux_z)", name="enth_flux")
+        profiles.add_task("plane_avg(kappa_flux_z)", name="kappa_flux")
 
         analysis_tasks.append(profiles)
 
@@ -476,10 +479,9 @@ class BoussinesqEquations2D(Equations):
         scalar.add_task("vol_avg(plane_avg(u)**2)", name="u_avg")
         scalar.add_task("vol_avg((u - plane_avg(u))**2)", name="u1")
         scalar.add_task("vol_avg(Nu)", name="Nu")
-        #scalar.add_task("vol_avg(conv_flux_z) + 1.", name="Nu")
-        scalar.add_task("(1-vol_avg(enth_flux_z/P))**(-1.)", name="Nu_flux")
         scalar.add_task("vol_avg(Re)", name="Re")
         scalar.add_task("vol_avg(Pe)", name="Pe")
+        scalar.add_task("vol_avg(delta_T)", name="delta_T")
         analysis_tasks.append(scalar)
 
         return analysis_tasks

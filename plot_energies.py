@@ -27,12 +27,14 @@ def plot_energies(data, times, output_path='./'):
     
     fig_energies = plt.figure(figsize=(16,8))
     ax1 = fig_energies.add_subplot(2,1,1)
+    plt.grid()
     ax1.semilogy(t, data['KE'], label="KE")
     ax1.semilogy(t, data['IE'], label="IE")
     ax1.semilogy(t, data['TE'], label="TE")
     ax1.legend()
     
     ax2 = fig_energies.add_subplot(2,1,2)
+    plt.grid()
     ax2.plot(t, data['KE'], label="KE")
     ax2.plot(t, data['IE'], label="IE")
     ax2.plot(t, data['TE'], label="TE")
@@ -41,6 +43,7 @@ def plot_energies(data, times, output_path='./'):
 
     fig_KE = plt.figure(figsize=(16,8))
     ax1 = fig_KE.add_subplot(1,1,1)
+    plt.grid()
     ax1.plot(t, data['KE'], label="KE")
     ax1.plot(t, data['IE']-data['IE'][0], label="IE-IE$_0$")
     ax1.plot(t, data['TE']-data['TE'][0], label="TE-TE$_0$", color='black')
@@ -51,6 +54,7 @@ def plot_energies(data, times, output_path='./'):
 
     fig_KE_2 = plt.figure(figsize=(16,8))
     ax1 = fig_KE_2.add_subplot(1,1,1)
+    plt.grid()
     ax1.plot(t, data['KE'], label="KE total")
     ax1.plot(t, data['KE_fluc'], label="KE fluc")
     ax1.plot(t, data['KE'] - data['KE_fluc'], label="KE mean")
@@ -65,10 +69,12 @@ def plot_energies(data, times, output_path='./'):
 
     fig_KE_only = plt.figure(figsize=(16,8))
     ax1 = fig_KE_only.add_subplot(2,1,1)
+    plt.grid()
     ax1.plot(t, data['KE'], label="KE")
     ax1.legend()
     ax1.set_ylabel("energy")
     ax2 = fig_KE_only.add_subplot(2,1,2)
+    plt.grid()
     ax2.semilogy(t, data['KE'], label="KE")
     ax2.legend()
     ax2.set_xlabel("time")
@@ -77,6 +83,7 @@ def plot_energies(data, times, output_path='./'):
  
     fig_log = plt.figure(figsize=(16,8))
     ax1 = fig_log.add_subplot(1,1,1)
+    plt.grid()
     ax1.semilogy(t, data['KE'], label="KE")
     ax1.semilogy(t, np.abs(data['IE']-data['IE'][0]), label="|IE-IE$_0$|")
     ax1.semilogy(t, np.abs(data['TE']-data['TE'][0]), label="|TE-TE$_0$|", color='black')
@@ -87,20 +94,12 @@ def plot_energies(data, times, output_path='./'):
 
     fig_Nu = plt.figure(figsize=(16,8))
     ax1 = fig_Nu.add_subplot(1,1,1)
+    plt.grid()
     ax1.semilogy(t, data['Nu'], label="Nu")
     ax1.set_xlabel("time")
     ax1.set_ylabel("Nu")
     ax1.legend()
     figs["nusselt_fixedT"] = fig_Nu
-
-    fig_Nu_flux = plt.figure(figsize=(16,8))
-    ax1 = fig_Nu_flux.add_subplot(1,1,1)
-    ax1.semilogy(t, data['Nu_flux'], label="Nu_flux")
-    ax1.set_xlabel("time")
-    ax1.set_ylabel("Nu_flux")
-    ax1.legend()
-    figs["nusselt_fixedFlux"] = fig_Nu_flux
-
 
     for key in figs.keys():
         figs[key].savefig(output_path+'scalar_{}.png'.format(key))
