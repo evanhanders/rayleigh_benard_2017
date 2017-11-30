@@ -99,7 +99,18 @@ def plot_energies(data, times, output_path='./'):
     ax1.set_xlabel("time")
     ax1.set_ylabel("Nu")
     ax1.legend()
-    figs["nusselt_fixedT"] = fig_Nu
+    figs["nusselt"] = fig_Nu
+
+    fig_deltaT = plt.figure(figsize=(16,8))
+    ax1 = fig_deltaT.add_subplot(1,1,1)
+    plt.grid()
+    ax1.semilogy(t, -data['delta_T'], label=r"$\Delta T$")
+    ax1.set_xlabel("time")
+    ax1.set_ylabel(r"$\Delta T$")
+    ax1.legend()
+    figs["nusselt_deltaT"] = fig_deltaT
+
+
 
     for key in figs.keys():
         figs[key].savefig(output_path+'scalar_{}.png'.format(key))
